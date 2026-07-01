@@ -1,0 +1,5 @@
+1. refreshing the page bugs with how the undo button works
+
+2. Auto assign colors to users and thir cursor
+
+3.

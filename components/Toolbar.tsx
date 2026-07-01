@@ -1,14 +1,71 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { useDrawing, Tool } from '@/lib/store';
 import { Button } from './ui/Button';
+import { pb } from '@/lib/api';
 
 const TOOLS: Tool[] = ['brush', 'rectangle', 'circle', 'line', 'text'];
 const COLORS = ['#565656', '#6C63FF', '#FF6B6B', '#4ECDC4', '#FFE66D', '#FFFFFF'];
 
-export const Toolbar: React.FC = () => {
+export const Toolbar: React.FC<{ roomId?: string }> = ({ roomId }) => {
   const { tool, setTool, color, setColor, undo, redo, clearCanvas } = useDrawing();
+
+  const handleUndo = useCallback(async () => {
+    const state = useDrawing.getState();
+    if (state.history.length <= 1) return;
+    const currentStrokes = state.history[state.history.length - 1];
+    const prevStrokes = state.history[state.history.length - 2];
+    
+    // find stroke in currentStrokes not in prevStrokes
+    const removedStroke = currentStrokes.find(s => !prevStrokes.includes(s));
+    
+    undo(); // Update local state instantly
+
+    if (removedStroke?.id && roomId) {
+       await pb.collection('drawings').delete(removedStroke.id).catch(() => {});
+    }
+  }, [roomId, undo]);
+
+  const handleClear = async () => {
+    const confirmed = window.confirm("Are you sure you want to clear the entire canvas? This action cannot be undone.");
+    if (!confirmed) return;
+
+    const state = useDrawing.getState();
+    const strokes = state.strokes;
+    
+    // Delete all strokes from PocketBase
+    if (roomId) {
+      strokes.forEach((stroke) => {
+        if (stroke.id) {
+          pb.collection('drawings').delete(stroke.id).catch(() => {});
+        }
+      });
+    }
+
+    clearCanvas();
+  };
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z') {
+          e.preventDefault();
+          handleUndo();
+        } else if (e.key === 'y' || (e.key === 'Z' && e.shiftKey)) {
+          e.preventDefault();
+          redo();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, redo]);
 
   return (
     <div className="flex gap-4 p-4 bg-neo-bg rounded-neo shadow-neo-md items-center mx-auto w-max max-w-full overflow-x-auto">
@@ -46,9 +103,9 @@ export const Toolbar: React.FC = () => {
 
       {/* Actions */}
       <div className="ml-2 border-l-2 border-neo-shadow/50 pl-6 flex gap-3">
-        <Button onClick={undo} variant="secondary">↶ Undo</Button>
+        <Button onClick={handleUndo} variant="secondary">↶ Undo</Button>
         <Button onClick={redo} variant="secondary">↷ Redo</Button>
-        <Button onClick={clearCanvas}>Clear</Button>
+        <Button onClick={handleClear}>Clear</Button>
       </div>
     </div>
   );

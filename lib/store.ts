@@ -26,6 +26,7 @@ export interface DrawingState {
   setCursor: (userId: string, x: number, y: number, color?: string, name?: string) => void;
   removeCursor: (userId: string) => void;
   setStrokes: (strokes: any[]) => void;
+  removeStroke: (id: string) => void;
 }
 
 export const useDrawing = create<DrawingState>((set) => ({
@@ -43,6 +44,14 @@ export const useDrawing = create<DrawingState>((set) => ({
     history: [...state.history, [...state.strokes, stroke]],
     redoStack: [], // clearing redo stack on new action
   })),
+  removeStroke: (id) => set((state) => {
+    const newStrokes = state.strokes.filter(s => s.id !== id);
+    return {
+      strokes: newStrokes,
+      history: [...state.history, newStrokes],
+      redoStack: []
+    };
+  }),
   setStrokes: (strokes) => set({ strokes, history: [strokes], redoStack: [] }),
   setCursor: (userId, x, y, color = '#565656', name = 'Anonymous') => set((state) => ({
     cursors: {

@@ -163,9 +163,15 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
     const endX = e.clientX - rect.left;
     const endY = e.clientY - rect.top;
     
+    const generateId = () => {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      return Array.from({length: 15}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    };
+
     if (tool === 'brush') {
       if (currentPoints.current.length > 0) {
         const newStroke = {
+          id: generateId(),
           type: 'brush',
           points: currentPoints.current,
           color,
@@ -180,12 +186,12 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
       
       let newStroke: any = null;
       if (tool === 'rectangle') {
-        newStroke = { type: 'rectangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth };
+        newStroke = { id: generateId(), type: 'rectangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth };
       } else if (tool === 'circle') {
         const radius = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
-        newStroke = { type: 'circle', cx: startX, cy: startY, radius, color, strokeWidth };
+        newStroke = { id: generateId(), type: 'circle', cx: startX, cy: startY, radius, color, strokeWidth };
       } else if (tool === 'line') {
-        newStroke = { type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color, strokeWidth };
+        newStroke = { id: generateId(), type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color, strokeWidth };
       }
 
       if (newStroke) {
