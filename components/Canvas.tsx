@@ -1,14 +1,27 @@
 'use client';
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useDrawing } from '@/lib/store';
 import { useRealtimeSync } from '@/hooks/useRealtimeSync';
+import { usePermissions } from '@/hooks/usePermissions';
+import { PermissionDeniedDialog } from './PermissionDeniedDialog';
+import type { Role } from '@/lib/security/permissions';
+import type { Action } from '@/lib/security/permissions';
 
-export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
+interface CanvasProps {
+  roomId: string;
+  role: Role | null;
+  memberColor?: string;
+}
+
+export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { tool, color, strokeWidth, strokes, addStroke, cursors } = useDrawing();
-  const { broadcastStroke, broadcastCursor } = useRealtimeSync(roomId);
+  const { broadcastStroke, broadcastCursor } = useRealtimeSync(roomId, memberColor);
+  const { can, requestPermission } = usePermissions(roomId, role);
   
+  const [deniedAction, setDeniedAction] = useState<Action | null>(null);
+
   const isDrawing = useRef(false);
   
   // For brush
@@ -17,7 +30,6 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
   const startPoint = useRef<{x: number, y: number} | null>(null);
 
   const redrawCanvas = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-    // Clear the canvas to let the CSS background show through
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     // Draw subtle dot pattern
@@ -85,6 +97,12 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
   }, [strokes]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // Permission check for drawing
+    if (!can('draw')) {
+      setDeniedAction('draw');
+      return;
+    }
+
     isDrawing.current = true;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -114,7 +132,6 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
 
     if (tool === 'brush') {
       currentPoints.current.push({ x, y });
-      // Draw Delta
       ctx.strokeStyle = color;
       ctx.lineWidth = strokeWidth;
       ctx.lineCap = 'round';
@@ -131,7 +148,6 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
         ctx.stroke();
       }
     } else {
-      // Shape Preview
       if (!startPoint.current) return;
       redrawCanvas(ctx, canvas);
       
@@ -215,7 +231,9 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className="border-0 rounded-neo shadow-neo-inset cursor-crosshair bg-neo-bg w-full"
+        className={`border-0 rounded-neo shadow-neo-inset bg-neo-bg w-full ${
+          can('draw') ? 'cursor-crosshair' : 'cursor-not-allowed'
+        }`}
       />
       {Object.entries(cursors).map(([id, cursor]) => (
         <div
@@ -231,6 +249,14 @@ export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
           </span>
         </div>
       ))}
+
+      {/* Permission Denied Dialog */}
+      <PermissionDeniedDialog
+        action={deniedAction || 'draw'}
+        isOpen={deniedAction !== null}
+        onClose={() => setDeniedAction(null)}
+        onRequestPermission={requestPermission}
+      />
     </div>
   );
 };
