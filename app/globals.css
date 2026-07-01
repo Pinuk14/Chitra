@@ -1,18 +1,32 @@
 @import "tailwindcss";
 
 @theme {
-  --color-neo-bg: #E8EDF5;
-  --color-neo-shadow: #A3B1C6;
-  --color-neo-light: #FFFFFF;
-  --color-neo-text: #565656;
+  --color-neo-bg: var(--theme-neo-bg);
+  --color-neo-shadow: var(--theme-neo-shadow);
+  --color-neo-light: var(--theme-neo-light);
+  --color-neo-text: var(--theme-neo-text);
   --color-neo-accent: #6C63FF;
 
-  --shadow-neo-sm: 2px 2px 5px #A3B1C6, -2px -2px 5px #FFFFFF;
-  --shadow-neo-md: 4px 4px 10px #A3B1C6, -4px -4px 10px #FFFFFF;
-  --shadow-neo-lg: 6px 6px 20px #A3B1C6, -6px -6px 20px #FFFFFF;
-  --shadow-neo-inset: inset 2px 2px 5px #A3B1C6, inset -2px -2px 5px #FFFFFF;
+  --shadow-neo-sm: 2px 2px 5px var(--theme-neo-shadow), -2px -2px 5px var(--theme-neo-light);
+  --shadow-neo-md: 4px 4px 10px var(--theme-neo-shadow), -4px -4px 10px var(--theme-neo-light);
+  --shadow-neo-lg: 6px 6px 20px var(--theme-neo-shadow), -6px -6px 20px var(--theme-neo-light);
+  --shadow-neo-inset: inset 2px 2px 5px var(--theme-neo-shadow), inset -2px -2px 5px var(--theme-neo-light);
 
   --radius-neo: 16px;
+}
+
+:root {
+  --theme-neo-bg: #E8EDF5;
+  --theme-neo-shadow: #A3B1C6;
+  --theme-neo-light: #FFFFFF;
+  --theme-neo-text: #565656;
+}
+
+.dark {
+  --theme-neo-bg: #20222a;
+  --theme-neo-shadow: #17181e;
+  --theme-neo-light: #292c36;
+  --theme-neo-text: #E8EDF5;
 }
 
 @layer base {

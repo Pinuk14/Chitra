@@ -3,9 +3,11 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { InputField } from '@/components/ui/InputField';
 import { pb } from '@/lib/api';
+import { createRoom as createRoomApi } from '@/lib/room';
 import { useRouter } from 'next/navigation';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { InputField } from '@/components/ui/InputField';
 
 export default function Home() {
   const [roomId, setRoomId] = useState('');
@@ -15,11 +17,8 @@ export default function Home() {
   const createRoom = async () => {
     setIsCreating(true);
     try {
-      const room = await pb.collection('rooms').create({
-        name: `Room ${Math.floor(Math.random() * 10000)}`,
-        created_by: 'anonymous',
-      });
-      router.push(`/room/${room.id}`);
+      const id = await createRoomApi(`Room ${Math.floor(Math.random() * 10000)}`);
+      router.push(`/room/${id}`);
     } catch (err) {
       console.error(err);
       alert('Failed to create room.');
@@ -34,7 +33,10 @@ export default function Home() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen">
+    <div className="flex flex-col items-center justify-center min-h-screen relative p-8">
+      <div className="absolute top-8 right-8">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-md">
         <h1 className="text-4xl font-bold mb-8 text-center text-neo-accent">Chitra</h1>
         

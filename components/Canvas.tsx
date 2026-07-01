@@ -2,10 +2,13 @@
 
 import React, { useRef, useEffect } from 'react';
 import { useDrawing } from '@/lib/store';
+import { useRealtimeSync } from '@/hooks/useRealtimeSync';
 
-export const Canvas: React.FC = () => {
+export const Canvas: React.FC<{ roomId: string }> = ({ roomId }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { tool, color, strokeWidth, strokes, addStroke } = useDrawing();
+  const { tool, color, strokeWidth, strokes, addStroke, cursors } = useDrawing();
+  const { broadcastStroke, broadcastCursor } = useRealtimeSync(roomId);
+  
   const isDrawing = useRef(false);
   
   // For brush
@@ -14,8 +17,20 @@ export const Canvas: React.FC = () => {
   const startPoint = useRef<{x: number, y: number} | null>(null);
 
   const redrawCanvas = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-    ctx.fillStyle = '#E8EDF5';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Clear the canvas to let the CSS background show through
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw subtle dot pattern
+    ctx.fillStyle = 'rgba(128, 128, 128, 0.2)';
+    const spacing = 30;
+    for (let x = spacing; x < canvas.width; x += spacing) {
+      for (let y = spacing; y < canvas.height; y += spacing) {
+        ctx.beginPath();
+        ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     strokes.forEach((stroke) => {
       drawShape(ctx, stroke);
     });
@@ -95,6 +110,8 @@ export const Canvas: React.FC = () => {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    broadcastCursor(x, y);
+
     if (tool === 'brush') {
       currentPoints.current.push({ x, y });
       // Draw Delta
@@ -148,24 +165,32 @@ export const Canvas: React.FC = () => {
     
     if (tool === 'brush') {
       if (currentPoints.current.length > 0) {
-        addStroke({
+        const newStroke = {
           type: 'brush',
           points: currentPoints.current,
           color,
           strokeWidth,
-        });
+        };
+        addStroke(newStroke);
+        broadcastStroke(newStroke);
       }
     } else if (startPoint.current) {
       const startX = startPoint.current.x;
       const startY = startPoint.current.y;
       
+      let newStroke: any = null;
       if (tool === 'rectangle') {
-        addStroke({ type: 'rectangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth });
+        newStroke = { type: 'rectangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth };
       } else if (tool === 'circle') {
         const radius = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
-        addStroke({ type: 'circle', cx: startX, cy: startY, radius, color, strokeWidth });
+        newStroke = { type: 'circle', cx: startX, cy: startY, radius, color, strokeWidth };
       } else if (tool === 'line') {
-        addStroke({ type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color, strokeWidth });
+        newStroke = { type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color, strokeWidth };
+      }
+
+      if (newStroke) {
+        addStroke(newStroke);
+        broadcastStroke(newStroke);
       }
     }
     
@@ -175,15 +200,31 @@ export const Canvas: React.FC = () => {
   };
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={1200}
-      height={700}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-      className="border-0 rounded-neo shadow-neo-inset cursor-crosshair bg-neo-bg w-full"
-    />
+    <div className="relative w-full h-full overflow-hidden">
+      <canvas
+        ref={canvasRef}
+        width={1200}
+        height={700}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        className="border-0 rounded-neo shadow-neo-inset cursor-crosshair bg-neo-bg w-full"
+      />
+      {Object.entries(cursors).map(([id, cursor]) => (
+        <div
+          key={id}
+          className="absolute pointer-events-none flex flex-col items-start transition-all duration-75"
+          style={{ left: cursor.x, top: cursor.y }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={cursor.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ fill: cursor.color, fillOpacity: 0.5 }}>
+            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+          </svg>
+          <span className="text-xs font-bold px-1 rounded bg-neo-bg shadow-neo-sm text-neo-text" style={{ backgroundColor: cursor.color, color: '#fff' }}>
+            {cursor.name || 'Anonymous'}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 };
