@@ -69,7 +69,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
     const state = useDrawing.getState();
     const roomName = roomId ? (await pb.collection('rooms').getOne(roomId, { requestKey: null })).name : 'Local Room';
     
-    exportBoardToImage(
+    await exportBoardToImage(
       state.strokes, 
       roomName, 
       user?.username || 'Anonymous'

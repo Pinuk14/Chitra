@@ -13,6 +13,35 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { pb } from '@/lib/api';
+import { generateUserExchangeKeyPair, generateSigningKeyPair, exportKeyAsJWK } from '@/lib/security/crypto';
+
+async function initializeUserCrypto(userId: string) {
+  if (typeof window === 'undefined') return;
+  const exKey = localStorage.getItem(`crypto_ex_${userId}`);
+  const signKey = localStorage.getItem(`crypto_sign_${userId}`);
+
+  if (exKey && signKey) return; // Already initialized on this device
+
+  try {
+    const exchangeKeys = await generateUserExchangeKeyPair();
+    const signKeys = await generateSigningKeyPair();
+
+    const pubExJwk = await exportKeyAsJWK(exchangeKeys.publicKey);
+    const privExJwk = await exportKeyAsJWK(exchangeKeys.privateKey);
+    const pubSignJwk = await exportKeyAsJWK(signKeys.publicKey);
+    const privSignJwk = await exportKeyAsJWK(signKeys.privateKey);
+
+    localStorage.setItem(`crypto_ex_${userId}`, JSON.stringify(privExJwk));
+    localStorage.setItem(`crypto_sign_${userId}`, JSON.stringify(privSignJwk));
+
+    await pb.collection('users').update(userId, {
+      public_key_exchange: JSON.stringify(pubExJwk),
+      public_key_sign: JSON.stringify(pubSignJwk)
+    });
+  } catch (err) {
+    console.error('Failed to initialize user crypto:', err);
+  }
+}
 
 interface User {
   id: string;
@@ -55,12 +84,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const model = pb.authStore.record;
     if (pb.authStore.isValid && model) {
       setUser(mapUser(model));
+      initializeUserCrypto(model.id);
     }
     setIsLoading(false);
 
     // Listen for auth state changes
     const unsubscribe = pb.authStore.onChange((_token, model) => {
       setUser(mapUser(model));
+      if (model) {
+        initializeUserCrypto(model.id);
+      }
     });
 
     return () => unsubscribe();
@@ -70,6 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await pb.collection('users').authWithPassword(identity, password);
       setUser(mapUser(result.record));
+      await initializeUserCrypto(result.record.id);
 
       // If "Keep me logged in" is NOT checked, mark session as temporary.
       // PocketBase SDK persists to localStorage by default. For non-persistent sessions,
@@ -99,6 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Auto-login after registration
       const result = await pb.collection('users').authWithPassword(username, password);
       setUser(mapUser(result.record));
+      await initializeUserCrypto(result.record.id);
     } catch (err: any) {
       // Extract validation errors from PocketBase response
       const data = err?.response?.data;

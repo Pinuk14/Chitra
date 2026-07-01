@@ -1,14 +1,14 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { pb } from '@/lib/api';
 import { useDrawing } from '@/lib/store';
 import { useAuth } from '@/lib/auth/context';
 import { checkRateLimit } from '@/lib/security/rate-limiter';
 import { checkForSpam } from '@/lib/security/spam-detector';
-import { encryptData, decryptData } from '@/lib/security/crypto';
+import { encryptData, decryptData, signData, verifySignature, importJWK, unwrapRoomKey } from '@/lib/security/crypto';
 
 /**
- * Real-time sync hook — now uses authenticated user identity
- * instead of random IDs. Integrates rate limiting and spam detection.
+ * Real-time sync hook — E2EE enabled
+ * Integrates rate limiting, spam detection, digital signatures, and optional true E2EE room keys.
  */
 
 const RANDOM_COLORS = ['#6C63FF', '#FF6B6B', '#4ECDC4', '#FFE66D', '#FF9F1C', '#9D4EDD', '#F15BB5'];
@@ -20,6 +20,8 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
   const lastCursorUpdate = useRef(0);
   const userColor = useRef(memberColor || RANDOM_COLORS[Math.floor(Math.random() * RANDOM_COLORS.length)]);
 
+  const [roomKey, setRoomKey] = useState<CryptoKey | null>(null);
+  
   // Use authenticated user ID or fallback
   const userId = user?.id || 'anon';
   const username = user?.username || 'Anonymous';
@@ -28,11 +30,51 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
     if (memberColor) userColor.current = memberColor;
   }, [memberColor]);
 
+  // Load Room Key if E2EE is set up for this member
+  useEffect(() => {
+    if (!roomId || !userId || userId === 'anon') return;
+    
+    // Try to get encrypted room key for this user
+    pb.collection('room_members').getFirstListItem(`room_id="${roomId}" && user_id="${userId}"`)
+      .then(async (memberRecord) => {
+        if (memberRecord.encrypted_room_key) {
+          const privExJwkStr = localStorage.getItem(`crypto_ex_${userId}`);
+          if (privExJwkStr) {
+            const privExJwk = JSON.parse(privExJwkStr);
+            const privateExKey = await importJWK(privExJwk, { name: 'RSA-OAEP', hash: 'SHA-256' }, ['unwrapKey']);
+            const rKey = await unwrapRoomKey(memberRecord.encrypted_room_key, privateExKey);
+            setRoomKey(rKey);
+            console.log("E2EE Room Key loaded successfully.");
+          }
+        }
+      }).catch(err => {
+        console.debug("No E2EE room key found for user, falling back to legacy crypto.");
+      });
+  }, [roomId, userId]);
+
   useEffect(() => {
     let unsubscribeDrawings: () => void;
     let unsubscribeUsers: () => void;
     
     if (!roomId || !user) return;
+
+    // Helper to verify stroke signature
+    const verifyStrokeSignature = async (stroke: any, signature: string, senderId: string) => {
+      if (!signature || !senderId) return false;
+      try {
+        const sender = await pb.collection('users').getOne(senderId);
+        if (sender.public_key_sign) {
+          const pubSignJwk = JSON.parse(sender.public_key_sign);
+          const publicKey = await importJWK(pubSignJwk, { name: 'ECDSA', namedCurve: 'P-256' }, ['verify']);
+          // We sign the JSON representation of the stroke without the id
+          const { id, ...strokeData } = stroke;
+          return await verifySignature(JSON.stringify(strokeData), signature, publicKey);
+        }
+      } catch(e) {
+        console.warn("Signature verification failed", e);
+      }
+      return false;
+    };
 
     // Fetch existing drawings
     pb.collection('drawings').getFullList({
@@ -43,10 +85,20 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
       const initialStrokes = [];
       for (const r of records) {
         try {
-          const decrypted = await decryptData(r.strokes);
+          // Fallback to undefined roomKey (legacy) if we don't have one
+          const decrypted = await decryptData(r.strokes, roomKey || undefined);
           if (decrypted) {
             const parsed = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
             parsed.id = r.id;
+            
+            // Signature Check (if available)
+            if (r.signature && r.user_id) {
+               const isValid = await verifyStrokeSignature(parsed, r.signature, r.user_id);
+               if (!isValid) {
+                 console.warn("Tampering detected on stroke ID:", r.id);
+                 continue; // Skip rendering tampered stroke
+               }
+            }
             initialStrokes.push(parsed);
           }
         } catch (e) {
@@ -62,10 +114,19 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
     pb.collection('drawings').subscribe('*', async (e) => {
       if (e.action === 'create' && e.record.room_id === roomId && e.record.user_id !== userId) {
         try {
-          const decrypted = await decryptData(e.record.strokes);
+          const decrypted = await decryptData(e.record.strokes, roomKey || undefined);
           if (decrypted) {
             const incomingStroke = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
             incomingStroke.id = e.record.id;
+            
+            // Signature check
+            if (e.record.signature && e.record.user_id) {
+               const isValid = await verifyStrokeSignature(incomingStroke, e.record.signature, e.record.user_id);
+               if (!isValid) {
+                 console.warn("Tampering detected on incoming stroke ID:", e.record.id);
+                 return; 
+               }
+            }
             addStroke(incomingStroke);
           }
         } catch (err) {
@@ -120,7 +181,7 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
       cleanupUserRecord();
       window.removeEventListener('beforeunload', cleanupUserRecord);
     };
-  }, [roomId, user, userId, username, setStrokes, addStroke, removeCursor, setCursor]);
+  }, [roomId, user, userId, username, setStrokes, addStroke, removeCursor, setCursor, roomKey]);
 
   const broadcastStroke = useCallback(async (stroke: any) => {
     if (!roomId || !user) return;
@@ -140,18 +201,30 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
     }
 
     try {
-      const encryptedStroke = await encryptData(stroke);
+      const encryptedStroke = await encryptData(stroke, roomKey || undefined);
+      
+      let signature = "";
+      const privSignJwkStr = localStorage.getItem(`crypto_sign_${userId}`);
+      if (privSignJwkStr) {
+         const privSignJwk = JSON.parse(privSignJwkStr);
+         const privateKey = await importJWK(privSignJwk, { name: 'ECDSA', namedCurve: 'P-256' }, ['sign']);
+         // Sign without ID (as it's assigned by DB later or client generates it)
+         const { id, ...strokeData } = stroke;
+         signature = await signData(JSON.stringify(strokeData), privateKey);
+      }
+
       await pb.collection('drawings').create({
         id: stroke.id,
         room_id: roomId,
         user_id: userId,
         strokes: encryptedStroke,
+        signature: signature,
         timestamp: new Date().toISOString(),
       }, { requestKey: null });
     } catch (err: any) {
       console.error('PB Drawings Error:', err.status, err.response, err);
     }
-  }, [roomId, user, userId]);
+  }, [roomId, user, userId, roomKey]);
 
   const broadcastUndo = useCallback(async (strokeId: string) => {
     if (!roomId || !strokeId || !user) return;
@@ -177,5 +250,5 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
     }
   }, [roomId, user]);
 
-  return { broadcastStroke, broadcastUndo, broadcastCursor, userId };
+  return { broadcastStroke, broadcastUndo, broadcastCursor, userId, isE2EEActive: !!roomKey };
 };

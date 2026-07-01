@@ -1,4 +1,6 @@
-export const exportBoardToImage = (
+import { computeSHA256Hash } from './security/crypto';
+
+export const exportBoardToImage = async (
   strokes: any[],
   roomName: string,
   username: string,
@@ -79,11 +81,15 @@ export const exportBoardToImage = (
   const lineSpacing = 20;
   const timestamp = new Date().toLocaleString();
   
+  // Compute Integrity Hash for the exported state
+  const hash = await computeSHA256Hash(JSON.stringify(strokes));
+  
   const watermarkLines = [
     'Chitra Collaborative Whiteboard',
     `Room: ${roomName}`,
     `Exported by: ${username}`,
-    `Time: ${timestamp}`
+    `Time: ${timestamp}`,
+    `Integrity: ${hash.substring(0, 16)}...`
   ];
 
   watermarkLines.forEach((line, index) => {
