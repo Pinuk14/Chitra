@@ -4,14 +4,27 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { InputField } from '@/components/ui/InputField';
+import { pb } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
 export default function Home() {
   const [roomId, setRoomId] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
   const router = useRouter();
 
-  const createRoom = () => {
-    // TODO: Call PocketBase to create room
+  const createRoom = async () => {
+    setIsCreating(true);
+    try {
+      const room = await pb.collection('rooms').create({
+        name: `Room ${Math.floor(Math.random() * 10000)}`,
+        created_by: 'anonymous',
+      });
+      router.push(`/room/${room.id}`);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to create room.');
+      setIsCreating(false);
+    }
   };
 
   const joinRoom = () => {
@@ -34,7 +47,9 @@ export default function Home() {
         />
         
         <div className="flex gap-4">
-          <Button onClick={createRoom} className="flex-1">Create Room</Button>
+          <Button onClick={createRoom} className="flex-1" disabled={isCreating}>
+            {isCreating ? 'Creating...' : 'Create Room'}
+          </Button>
           <Button onClick={joinRoom} className="flex-1" variant="secondary">Join Room</Button>
         </div>
       </Card>
