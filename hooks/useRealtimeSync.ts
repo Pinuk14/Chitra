@@ -4,6 +4,7 @@ import { useDrawing } from '@/lib/store';
 import { useAuth } from '@/lib/auth/context';
 import { checkRateLimit } from '@/lib/security/rate-limiter';
 import { checkForSpam } from '@/lib/security/spam-detector';
+import { encryptData, decryptData } from '@/lib/security/crypto';
 
 /**
  * Real-time sync hook — now uses authenticated user identity
@@ -38,26 +39,38 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
       filter: `room_id = "${roomId}"`,
       sort: 'created',
       requestKey: null
-    }).then((records) => {
-      const initialStrokes = records.map(r => {
-        const parsed = typeof r.strokes === 'string' ? JSON.parse(r.strokes) : r.strokes;
-        parsed.id = r.id;
-        return parsed;
-      });
+    }).then(async (records) => {
+      const initialStrokes = [];
+      for (const r of records) {
+        try {
+          const decrypted = await decryptData(r.strokes);
+          if (decrypted) {
+            const parsed = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+            parsed.id = r.id;
+            initialStrokes.push(parsed);
+          }
+        } catch (e) {
+          console.warn('Failed to decrypt stroke', e);
+        }
+      }
       setStrokes(initialStrokes);
     }).catch(err => {
       console.error('Failed to fetch initial drawings:', err);
     });
 
     // Subscribe to incoming drawings
-    pb.collection('drawings').subscribe('*', (e) => {
+    pb.collection('drawings').subscribe('*', async (e) => {
       if (e.action === 'create' && e.record.room_id === roomId && e.record.user_id !== userId) {
-        const incomingStroke = typeof e.record.strokes === 'string' 
-          ? JSON.parse(e.record.strokes) 
-          : e.record.strokes;
-        
-        incomingStroke.id = e.record.id;
-        addStroke(incomingStroke);
+        try {
+          const decrypted = await decryptData(e.record.strokes);
+          if (decrypted) {
+            const incomingStroke = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+            incomingStroke.id = e.record.id;
+            addStroke(incomingStroke);
+          }
+        } catch (err) {
+          console.warn('Failed to decrypt incoming stroke', err);
+        }
       } else if (e.action === 'delete') {
         useDrawing.getState().removeStroke(e.record.id);
       }
@@ -127,11 +140,12 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
     }
 
     try {
+      const encryptedStroke = await encryptData(stroke);
       await pb.collection('drawings').create({
         id: stroke.id,
         room_id: roomId,
         user_id: userId,
-        strokes: stroke,
+        strokes: encryptedStroke,
         timestamp: new Date().toISOString(),
       }, { requestKey: null });
     } catch (err: any) {

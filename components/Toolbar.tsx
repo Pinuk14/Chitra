@@ -5,7 +5,9 @@ import { useDrawing, Tool } from '@/lib/store';
 import { Button } from './ui/Button';
 import { pb } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/lib/auth/context';
 import { PermissionDeniedDialog } from './PermissionDeniedDialog';
+import { exportBoardToImage } from '@/lib/exportUtils';
 import type { Role, Action } from '@/lib/security/permissions';
 
 const TOOLS: Tool[] = ['brush', 'rectangle', 'circle', 'line', 'text'];
@@ -17,6 +19,7 @@ interface ToolbarProps {
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
+  const { user } = useAuth();
   const { tool, setTool, color, setColor, undo, redo, clearCanvas } = useDrawing();
   const { can, requestPermission } = usePermissions(roomId || '', role);
   const [deniedAction, setDeniedAction] = useState<Action | null>(null);
@@ -60,6 +63,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
     }
 
     clearCanvas();
+  };
+
+  const handleExport = async () => {
+    const state = useDrawing.getState();
+    const roomName = roomId ? (await pb.collection('rooms').getOne(roomId, { requestKey: null })).name : 'Local Room';
+    
+    exportBoardToImage(
+      state.strokes, 
+      roomName, 
+      user?.username || 'Anonymous'
+    );
   };
 
   // Keyboard Shortcuts
@@ -138,6 +152,13 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
             className={!can('clear_board') ? 'opacity-50' : ''}
           >
             Clear
+          </Button>
+          <Button
+            onClick={() => guardAction('export_board', handleExport)}
+            variant="secondary"
+            className={!can('export_board') ? 'opacity-50' : ''}
+          >
+            ↓ Export
           </Button>
         </div>
       </div>

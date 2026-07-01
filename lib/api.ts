@@ -1,8 +1,12 @@
 import PocketBase from 'pocketbase';
 
-export const pb = new PocketBase(
-  process.env.NEXT_PUBLIC_POCKETBASE_URL
-);
+// Detect if we should use HTTPS based on the window location (if in browser)
+let pbUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
+if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+  pbUrl = pbUrl.replace('http://', 'https://');
+}
+
+export const pb = new PocketBase(pbUrl);
 
 export const auth = {
   login: (email: string, password: string) =>

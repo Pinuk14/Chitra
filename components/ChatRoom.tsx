@@ -5,6 +5,7 @@ import { pb } from '@/lib/api';
 import { useAuth } from '@/lib/auth/context';
 import { usePermissions } from '@/hooks/usePermissions';
 import { checkRateLimit } from '@/lib/security/rate-limiter';
+import { encryptData, decryptData } from '@/lib/security/crypto';
 import type { Role } from '@/lib/security/permissions';
 
 interface ChatRoomProps {
@@ -24,17 +25,34 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
   useEffect(() => {
     pb.collection('messages')
       .getFullList({ filter: `room_id="${roomId}"`, sort: 'created', requestKey: null })
-      .then(setMessages)
+      .then(async (records) => {
+        const decryptedRecords = [];
+        for (const r of records) {
+          try {
+            const dec = await decryptData(r.text);
+            decryptedRecords.push({ ...r, text: dec || r.text });
+          } catch (e) {
+            decryptedRecords.push(r);
+          }
+        }
+        setMessages(decryptedRecords);
+      })
       .catch(() => {});
 
     // Subscribe to new messages
     let unsubscribe: (() => void) | undefined;
-    pb.collection('messages').subscribe('*', (e) => {
+    pb.collection('messages').subscribe('*', async (e) => {
       if (e.action === 'create' && e.record.room_id === roomId) {
-        setMessages((prev) => {
-          if (prev.some(m => m.id === e.record.id)) return prev;
-          return [...prev, e.record];
-        });
+        try {
+          const dec = await decryptData(e.record.text);
+          const decryptedRecord = { ...e.record, text: dec || e.record.text };
+          setMessages((prev) => {
+            if (prev.some(m => m.id === e.record.id)) return prev;
+            return [...prev, decryptedRecord];
+          });
+        } catch (err) {
+          // Fallback
+        }
       }
     }).then(unsub => {
       unsubscribe = unsub;
@@ -61,15 +79,17 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
     }
 
     try {
+      const encryptedText = await encryptData(input.trim());
       const record = await pb.collection('messages').create({
         room_id: roomId,
         user_id: user.id,
         user_name: user.username,
-        text: input.trim(),
+        text: encryptedText,
         color: memberColor || '#565656',
       }, { requestKey: null });
       
-      setMessages((prev) => prev.some(m => m.id === record.id) ? prev : [...prev, record]);
+      const localRecord = { ...record, text: input.trim() };
+      setMessages((prev) => prev.some(m => m.id === record.id) ? prev : [...prev, localRecord]);
       setInput('');
     } catch (err) {
       console.error('Failed to send message:', err);
