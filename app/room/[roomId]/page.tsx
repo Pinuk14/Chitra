@@ -14,6 +14,8 @@ import { useAuth } from '@/lib/auth/context';
 import { AuthGuard } from '@/lib/auth/guard';
 import { useRoomAccess } from '@/hooks/useRoomAccess';
 import { hasPermission } from '@/lib/security/permissions';
+import Image from 'next/image';
+import Link from 'next/link';
 
 function RoomContent() {
   const params = useParams();
@@ -57,7 +59,19 @@ function RoomContent() {
           <h1 className="text-4xl text-neo-accent mb-4" style={{ fontFamily: 'var(--font-brushy)' }}>
             Chitra
           </h1>
-          <div className="text-4xl mb-4">{access.status === 'banned' ? '🚫' : '🔒'}</div>
+          <div className="flex justify-center mb-4 text-neo-text">
+            {access.status === 'banned' ? (
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+              </svg>
+            ) : (
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            )}
+          </div>
           <h2 className="text-xl font-bold text-neo-text mb-2">
             {access.status === 'banned' ? 'You Are Banned' : 'Access Denied'}
           </h2>
@@ -76,16 +90,20 @@ function RoomContent() {
   return (
     <div className="min-h-screen flex flex-col p-8 gap-8 max-w-[1600px] mx-auto">
       <div className="flex justify-between items-center bg-neo-bg shadow-neo-sm p-4 rounded-neo">
-        <h1 className="text-4xl text-neo-accent" style={{ fontFamily: 'var(--font-brushy)' }}>Chitra</h1>
+        <Link href="/dashboard" className="flex items-center gap-2 group">
+          <Image src="/Chitra_logo.png" alt="Chitra" width={32} height={32} className="object-contain" />
+          <h1 className="text-3xl text-neo-accent group-hover:opacity-80 transition-opacity" style={{ fontFamily: 'var(--font-brushy)' }}>Chitra</h1>
+        </Link>
         <div className="flex gap-3 items-center">
           {isAdmin && (
             <button
               onClick={() => setShowAdmin(!showAdmin)}
-              className={`px-3 py-2 rounded-neo text-sm font-bold transition-all ${
+              className={`px-3 py-2 flex items-center gap-2 rounded-neo text-sm font-bold transition-all ${
                 showAdmin ? 'shadow-neo-inset text-neo-accent' : 'shadow-neo-sm hover:shadow-neo-md text-neo-text'
               }`}
             >
-              ⚙ Admin
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              Admin
             </button>
           )}
           <ThemeToggle />
@@ -134,12 +152,11 @@ function RoomContent() {
               </div>
 
               <div className="relative flex-1 overflow-hidden min-h-[400px]">
-                <div className={`absolute inset-0 transition-transform duration-500 ease-in-out ${showChat ? '-translate-x-full' : 'translate-x-0'}`}>
+                {!showChat ? (
                   <UserList roomId={roomId} />
-                </div>
-                <div className={`absolute inset-0 transition-transform duration-500 ease-in-out ${showChat ? 'translate-x-0' : 'translate-x-full'}`}>
+                ) : (
                   <ChatRoom roomId={roomId} role={access.role} memberColor={memberColor} />
-                </div>
+                )}
               </div>
             </>
           )}

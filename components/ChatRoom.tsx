@@ -64,7 +64,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
   }, [roomId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages]);
 
   const sendMessage = async (e: React.FormEvent) => {

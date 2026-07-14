@@ -13,7 +13,18 @@ export const UserList: React.FC<UserListProps> = ({ roomId }) => {
     const fetchMembers = () => {
       pb.collection('room_members')
         .getFullList({ filter: `room_id="${roomId}" && (status="active" || status="muted")`, requestKey: null })
-        .then(setMembers)
+        .then((records) => {
+          // Deduplicate by user_id
+          const uniqueMembers: any[] = [];
+          const seen = new Set();
+          for (const rec of records) {
+            if (!seen.has(rec.user_id)) {
+              seen.add(rec.user_id);
+              uniqueMembers.push(rec);
+            }
+          }
+          setMembers(uniqueMembers);
+        })
         .catch(() => {});
     };
 

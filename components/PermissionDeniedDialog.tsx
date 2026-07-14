@@ -43,7 +43,12 @@ export const PermissionDeniedDialog: React.FC<PermissionDeniedDialogProps> = ({
 
       {/* Dialog */}
       <div className="relative neo-card w-full max-w-sm text-center animate-in">
-        <div className="text-4xl mb-4">🔒</div>
+        <div className="flex justify-center mb-4">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neo-text">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
         <h3 className="text-lg font-bold text-neo-text mb-2">Permission Required</h3>
         <p className="text-sm text-neo-text/60 mb-6">
           This action requires <span className="font-bold text-neo-accent">{ACTION_LABELS[action]}</span> permission.

@@ -13,12 +13,16 @@ export const ThemeToggle: React.FC = () => {
   const toggleTheme = () => {
     const root = document.documentElement;
     root.classList.toggle('dark');
-    setIsDark(root.classList.contains('dark'));
+    const isNowDark = root.classList.contains('dark');
+    setIsDark(isNowDark);
+    try {
+      localStorage.setItem('chitra-theme', isNowDark ? 'dark' : 'light');
+    } catch (_) {}
   };
 
   return (
     <Button onClick={toggleTheme} variant="secondary" className="px-4 py-2 text-sm">
-      {isDark ? '☀️ Light' : '🌙 Dark'}
+      {isDark ? 'Light' : 'Dark'}
     </Button>
   );
 };

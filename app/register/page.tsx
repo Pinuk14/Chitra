@@ -17,7 +17,7 @@ export default function RegisterPage() {
 
   // Redirect if already logged in
   React.useEffect(() => {
-    if (isAuthenticated) router.replace('/');
+    if (isAuthenticated) router.replace('/dashboard');
   }, [isAuthenticated, router]);
 
   // Password strength indicator

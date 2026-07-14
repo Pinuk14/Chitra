@@ -103,7 +103,9 @@ export const exportBoardToImage = async (
   // Trigger download
   const dataUrl = canvas.toDataURL('image/png');
   const link = document.createElement('a');
-  link.download = `Chitra_Export_${roomName.replace(/\s+/g, '_')}_${new Date().getTime()}.png`;
+  const datePart = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const safeName = roomName.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').toLowerCase();
+  link.download = `chitra-${safeName}-${datePart}.png`;
   link.href = dataUrl;
   document.body.appendChild(link);
   link.click();

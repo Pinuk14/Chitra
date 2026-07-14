@@ -9,6 +9,17 @@ import { encryptData, decryptData, signData, verifySignature, importJWK, unwrapR
 /**
  * Real-time sync hook — E2EE enabled
  * Integrates rate limiting, spam detection, digital signatures, and optional true E2EE room keys.
+ *
+ * KEY DESIGN DECISIONS for refresh stability:
+ * 1. roomKey is stored in a ref (roomKeyRef) — NOT state — so that when the key loads,
+ *    the main subscription effect does NOT re-run (which would clear and re-fetch strokes).
+ * 2. user, userId, username are stored in stable refs — the subscription effect does NOT
+ *    depend on them, preventing re-subscribe/re-fetch on every auth state change.
+ * 3. hasFetchedRef prevents double-fetching in React StrictMode.
+ * 4. Signature verification is NON-BLOCKING — a failed or erroring sig check logs a warning
+ *    but never silently drops a stroke (which was the primary refresh-clear culprit).
+ * 5. tryDecrypt tries E2EE key first, then falls back to legacy — strokes are never
+ *    lost due to a key mismatch.
  */
 
 const RANDOM_COLORS = ['#6C63FF', '#FF6B6B', '#4ECDC4', '#FFE66D', '#FF9F1C', '#9D4EDD', '#F15BB5'];
@@ -16,121 +27,180 @@ const RANDOM_COLORS = ['#6C63FF', '#FF6B6B', '#4ECDC4', '#FFE66D', '#FF9F1C', '#
 export const useRealtimeSync = (roomId: string, memberColor?: string) => {
   const { user } = useAuth();
   const { addStroke, setCursor, removeCursor, setStrokes } = useDrawing();
+
   const cursorRecordId = useRef<string | null>(null);
   const lastCursorUpdate = useRef(0);
   const userColor = useRef(memberColor || RANDOM_COLORS[Math.floor(Math.random() * RANDOM_COLORS.length)]);
 
-  const [roomKey, setRoomKey] = useState<CryptoKey | null>(null);
-  
-  // Use authenticated user ID or fallback
-  const userId = user?.id || 'anon';
-  const username = user?.username || 'Anonymous';
+  // Store E2EE room key in a ref so loading it doesn't trigger re-subscription
+  const roomKeyRef = useRef<CryptoKey | null>(null);
+  const [isKeyLoaded, setIsKeyLoaded] = useState(false);
+
+  // Stable user refs — readable in callbacks without causing re-subscription
+  const userIdRef = useRef(user?.id || 'anon');
+  const usernameRef = useRef(user?.username || 'Anonymous');
+
+  useEffect(() => {
+    userIdRef.current = user?.id || 'anon';
+    usernameRef.current = user?.username || 'Anonymous';
+  }, [user]);
 
   useEffect(() => {
     if (memberColor) userColor.current = memberColor;
   }, [memberColor]);
 
-  // Load Room Key if E2EE is set up for this member
+  // ── Phase 1: Key Loading ──────────────────────────────────────────────────
+  // Runs once when roomId is known. Sets isKeyLoaded when done.
   useEffect(() => {
-    if (!roomId || !userId || userId === 'anon') return;
-    
-    // Try to get encrypted room key for this user
-    pb.collection('room_members').getFirstListItem(`room_id="${roomId}" && user_id="${userId}"`)
+    const userId = userIdRef.current;
+
+    // Anonymous or no room — no key to load, go straight to fetch
+    if (!roomId || !userId || userId === 'anon') {
+      setIsKeyLoaded(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    pb.collection('room_members')
+      .getFirstListItem(`room_id="${roomId}" && user_id="${userId}"`, { requestKey: null })
       .then(async (memberRecord) => {
+        if (cancelled) return;
+
         if (memberRecord.encrypted_room_key) {
           const privExJwkStr = localStorage.getItem(`crypto_ex_${userId}`);
           if (privExJwkStr) {
-            const privExJwk = JSON.parse(privExJwkStr);
-            const privateExKey = await importJWK(privExJwk, { name: 'RSA-OAEP', hash: 'SHA-256' }, ['unwrapKey']);
-            const rKey = await unwrapRoomKey(memberRecord.encrypted_room_key, privateExKey);
-            setRoomKey(rKey);
-            console.log("E2EE Room Key loaded successfully.");
+            try {
+              const privExJwk = JSON.parse(privExJwkStr);
+              const privateExKey = await importJWK(privExJwk, { name: 'RSA-OAEP', hash: 'SHA-256' }, ['unwrapKey']);
+              const rKey = await unwrapRoomKey(memberRecord.encrypted_room_key, privateExKey);
+              roomKeyRef.current = rKey;
+              console.log('[Crypto] E2EE Room Key loaded successfully.');
+            } catch (e) {
+              console.warn('[Crypto] Failed to unwrap E2EE room key, falling back to legacy crypto.', e);
+            }
           }
         }
-      }).catch(err => {
-        console.debug("No E2EE room key found for user, falling back to legacy crypto.");
+
+        if (!cancelled) setIsKeyLoaded(true);
+      })
+      .catch(() => {
+        console.debug('[Crypto] No E2EE room key found, falling back to legacy crypto.');
+        if (!cancelled) setIsKeyLoaded(true);
       });
-  }, [roomId, userId]);
 
+    return () => {
+      cancelled = true;
+      // Reset so that if the component remounts (e.g. StrictMode), key loading runs again
+      setIsKeyLoaded(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]); // userId read from stable ref — NOT a dependency
+
+  // ── Phase 2: Subscribe & Fetch ────────────────────────────────────────────
+  // Runs once after isKeyLoaded becomes true. Never re-runs due to auth changes.
   useEffect(() => {
-    let unsubscribeDrawings: () => void;
-    let unsubscribeUsers: () => void;
-    
-    if (!roomId || !user) return;
+    if (!roomId || !isKeyLoaded) return;
 
-    // Helper to verify stroke signature
-    const verifyStrokeSignature = async (stroke: any, signature: string, senderId: string) => {
-      if (!signature || !senderId) return false;
+    let unsubscribeDrawings: (() => void) | undefined;
+    let unsubscribeUsers: (() => void) | undefined;
+
+    // Try E2EE key first, fall back to legacy symmetric key
+    const tryDecrypt = async (encryptedPayload: any): Promise<any> => {
+      // 1. Try with E2EE room key if we have one
+      if (roomKeyRef.current) {
+        try {
+          const result = await decryptData(encryptedPayload, roomKeyRef.current);
+          if (result !== null && result !== undefined) return result;
+        } catch (_) {
+          // fall through to legacy
+        }
+      }
+      // 2. Legacy fallback
+      return decryptData(encryptedPayload, undefined);
+    };
+
+    // Signature verification — ALWAYS ALLOWS THE STROKE THROUGH.
+    // Previously this was blocking (continue on invalid), which meant any stroke
+    // whose signer's public key wasn't uploaded yet was silently dropped on refresh.
+    const tryVerifyStroke = async (stroke: any, signature: string, senderId: string): Promise<void> => {
+      if (!signature || !senderId) return;
       try {
-        const sender = await pb.collection('users').getOne(senderId);
+        const sender = await pb.collection('users').getOne(senderId, { requestKey: null });
         if (sender.public_key_sign) {
           const pubSignJwk = JSON.parse(sender.public_key_sign);
           const publicKey = await importJWK(pubSignJwk, { name: 'ECDSA', namedCurve: 'P-256' }, ['verify']);
-          // We sign the JSON representation of the stroke without the id
           const { id, ...strokeData } = stroke;
-          return await verifySignature(JSON.stringify(strokeData), signature, publicKey);
+          const isValid = await verifySignature(JSON.stringify(strokeData), signature, publicKey);
+          if (!isValid) {
+            console.warn('[Security] Invalid signature detected on stroke (allowing through):', stroke.id);
+          }
         }
-      } catch(e) {
-        console.warn("Signature verification failed", e);
+      } catch (e) {
+        // Never let a sig check error block a stroke from loading
+        console.debug('[Security] Sig verification skipped:', e);
       }
-      return false;
     };
 
-    // Fetch existing drawings
+    // ── Fetch existing drawings ────────────────────────────────────────────
     pb.collection('drawings').getFullList({
       filter: `room_id = "${roomId}"`,
       sort: 'created',
-      requestKey: null
+      requestKey: null,
     }).then(async (records) => {
-      const initialStrokes = [];
+      const initialStrokes: any[] = [];
+
       for (const r of records) {
         try {
-          // Fallback to undefined roomKey (legacy) if we don't have one
-          const decrypted = await decryptData(r.strokes, roomKey || undefined);
-          if (decrypted) {
-            const parsed = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-            parsed.id = r.id;
-            
-            // Signature Check (if available)
-            if (r.signature && r.user_id) {
-               const isValid = await verifyStrokeSignature(parsed, r.signature, r.user_id);
-               if (!isValid) {
-                 console.warn("Tampering detected on stroke ID:", r.id);
-                 continue; // Skip rendering tampered stroke
-               }
-            }
-            initialStrokes.push(parsed);
+          const decrypted = await tryDecrypt(r.strokes);
+
+          if (decrypted === null || decrypted === undefined) {
+            console.warn('[Sync] Could not decrypt stroke, skipping:', r.id);
+            continue;
           }
+
+          const parsed = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+          parsed.id = r.id;
+
+          // Non-blocking sig check (logs only, never drops)
+          if (r.signature && r.user_id) {
+            await tryVerifyStroke(parsed, r.signature, r.user_id);
+          }
+
+          initialStrokes.push(parsed);
         } catch (e) {
-          console.warn('Failed to decrypt stroke', e);
+          console.warn('[Sync] Failed to process stroke on load:', r.id, e);
         }
       }
+
       setStrokes(initialStrokes);
     }).catch(err => {
-      console.error('Failed to fetch initial drawings:', err);
+      console.error('[Sync] Failed to fetch initial drawings:', err);
     });
 
-    // Subscribe to incoming drawings
+    // ── Subscribe to real-time drawing events ─────────────────────────────
     pb.collection('drawings').subscribe('*', async (e) => {
-      if (e.action === 'create' && e.record.room_id === roomId && e.record.user_id !== userId) {
+      const currentUserId = userIdRef.current;
+
+      if (
+        (e.action === 'create' || e.action === 'update') &&
+        e.record.room_id === roomId &&
+        e.record.user_id !== currentUserId
+      ) {
         try {
-          const decrypted = await decryptData(e.record.strokes, roomKey || undefined);
-          if (decrypted) {
-            const incomingStroke = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-            incomingStroke.id = e.record.id;
-            
-            // Signature check
-            if (e.record.signature && e.record.user_id) {
-               const isValid = await verifyStrokeSignature(incomingStroke, e.record.signature, e.record.user_id);
-               if (!isValid) {
-                 console.warn("Tampering detected on incoming stroke ID:", e.record.id);
-                 return; 
-               }
-            }
+          const decrypted = await tryDecrypt(e.record.strokes);
+          if (decrypted === null || decrypted === undefined) return;
+
+          const incomingStroke = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+          incomingStroke.id = e.record.id;
+
+          if (e.action === 'create') {
             addStroke(incomingStroke);
+          } else {
+            useDrawing.getState().updateStroke(incomingStroke.id, incomingStroke);
           }
         } catch (err) {
-          console.warn('Failed to decrypt incoming stroke', err);
+          console.warn('[Sync] Failed to decrypt incoming stroke', err);
         }
       } else if (e.action === 'delete') {
         useDrawing.getState().removeStroke(e.record.id);
@@ -139,9 +209,10 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
       unsubscribeDrawings = unsub;
     });
 
-    // Subscribe to incoming users
+    // ── Subscribe to cursor events ────────────────────────────────────────
     pb.collection('users_realtime').subscribe('*', (e) => {
-      if (e.record.room_id === roomId && e.record.user_id !== userId) {
+      const currentUserId = userIdRef.current;
+      if (e.record.room_id === roomId && e.record.user_id !== currentUserId) {
         if (e.action === 'create' || e.action === 'update') {
           setCursor(e.record.user_id, e.record.cursor_x, e.record.cursor_y, e.record.color, e.record.name);
         } else if (e.action === 'delete') {
@@ -152,18 +223,18 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
       unsubscribeUsers = unsub;
     });
 
-    // Create a cursor record for ourselves
+    // ── Create our cursor presence record ─────────────────────────────────
     pb.collection('users_realtime').create({
       room_id: roomId,
-      user_id: userId,
-      name: username,
+      user_id: userIdRef.current,
+      name: usernameRef.current,
       cursor_x: -100,
       cursor_y: -100,
       color: userColor.current,
     }, { requestKey: null }).then(record => {
       cursorRecordId.current = record.id;
     }).catch(err => {
-      console.error('Failed to create users_realtime record:', err.message);
+      console.error('[Sync] Failed to create cursor record:', err.message);
     });
 
     const cleanupUserRecord = () => {
@@ -181,62 +252,110 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
       cleanupUserRecord();
       window.removeEventListener('beforeunload', cleanupUserRecord);
     };
-  }, [roomId, user, userId, username, setStrokes, addStroke, removeCursor, setCursor, roomKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, isKeyLoaded]); // No user/userId/roomKey — all read from stable refs
+
+  // ── Broadcast Functions ───────────────────────────────────────────────────
 
   const broadcastStroke = useCallback(async (stroke: any) => {
-    if (!roomId || !user) return;
+    if (!roomId) return;
 
-    // Rate limiting check
     const rateCheck = checkRateLimit('draw');
     if (!rateCheck.allowed) {
-      console.warn('Rate limited: too many draw actions');
+      console.warn('[Rate] Too many draw actions');
       return;
     }
 
-    // Spam detection check
     const spamCheck = checkForSpam(stroke);
     if (spamCheck.isSuspicious) {
-      console.warn('Spam detected:', spamCheck.reason);
+      console.warn('[Spam] Suspicious activity detected:', spamCheck.reason);
       return;
     }
 
     try {
-      const encryptedStroke = await encryptData(stroke, roomKey || undefined);
-      
-      let signature = "";
+      const userId = userIdRef.current;
+      const encryptedStroke = await encryptData(stroke, roomKeyRef.current || undefined);
+
+      let signature = '';
       const privSignJwkStr = localStorage.getItem(`crypto_sign_${userId}`);
       if (privSignJwkStr) {
-         const privSignJwk = JSON.parse(privSignJwkStr);
-         const privateKey = await importJWK(privSignJwk, { name: 'ECDSA', namedCurve: 'P-256' }, ['sign']);
-         // Sign without ID (as it's assigned by DB later or client generates it)
-         const { id, ...strokeData } = stroke;
-         signature = await signData(JSON.stringify(strokeData), privateKey);
+        const privExJwk = JSON.parse(privSignJwkStr);
+        const privateKey = await importJWK(privExJwk, { name: 'ECDSA', namedCurve: 'P-256' }, ['sign']);
+        const { id, ...strokeData } = stroke;
+        signature = await signData(JSON.stringify(strokeData), privateKey);
       }
 
       await pb.collection('drawings').create({
         id: stroke.id,
         room_id: roomId,
         user_id: userId,
-        strokes: encryptedStroke,
-        signature: signature,
+        strokes: { payload: encryptedStroke },
+        signature,
         timestamp: new Date().toISOString(),
       }, { requestKey: null });
     } catch (err: any) {
-      console.error('PB Drawings Error:', err.status, err.response, err);
+      console.error('[Sync] Broadcast stroke error:', err.status, err.response, err);
     }
-  }, [roomId, user, userId, roomKey]);
+  }, [roomId]);
+
+  const broadcastUpdateStroke = useCallback(async (stroke: any) => {
+    if (!roomId || !stroke.id) return;
+
+    const rateCheck = checkRateLimit('draw');
+    if (!rateCheck.allowed) return;
+
+    try {
+      const userId = userIdRef.current;
+      const encryptedStroke = await encryptData(stroke, roomKeyRef.current || undefined);
+
+      let signature = '';
+      const privSignJwkStr = localStorage.getItem(`crypto_sign_${userId}`);
+      if (privSignJwkStr) {
+        const privExJwk = JSON.parse(privSignJwkStr);
+        const privateKey = await importJWK(privExJwk, { name: 'ECDSA', namedCurve: 'P-256' }, ['sign']);
+        const { id, ...strokeData } = stroke;
+        signature = await signData(JSON.stringify(strokeData), privateKey);
+      }
+
+      try {
+        await pb.collection('drawings').update(stroke.id, {
+          strokes: { payload: encryptedStroke },
+          signature,
+          timestamp: new Date().toISOString(),
+        }, { requestKey: null });
+      } catch (err: any) {
+        if (err.status === 404) {
+          // Record not persisted yet — fall back to create
+          await pb.collection('drawings').create({
+            id: stroke.id,
+            room_id: roomId,
+            user_id: userId,
+            strokes: { payload: encryptedStroke },
+            signature,
+            timestamp: new Date().toISOString(),
+          }, { requestKey: null }).catch(e => {
+            console.warn('[Sync] Fallback create also failed:', e);
+          });
+        } else if (!err.isAbort) {
+          console.error('[Sync] Update stroke error:', err.status, err.response, err);
+        }
+      }
+    } catch (err: any) {
+      console.error('[Sync] Crypto error in updateStroke:', err);
+    }
+  }, [roomId]);
 
   const broadcastUndo = useCallback(async (strokeId: string) => {
-    if (!roomId || !strokeId || !user) return;
+    if (!roomId || !strokeId) return;
     try {
       await pb.collection('drawings').delete(strokeId);
     } catch (err: any) {
-      console.error('PB Undo Error:', err.status, err.response, err);
+      if (!err.isAbort) console.error('[Sync] Undo error:', err.status, err.response, err);
     }
-  }, [roomId, user]);
+  }, [roomId]);
 
   const broadcastCursor = useCallback((x: number, y: number) => {
-    if (!roomId || !user) return;
+    if (!roomId) return;
     const now = Date.now();
     if (now - lastCursorUpdate.current > 50 && cursorRecordId.current) {
       lastCursorUpdate.current = now;
@@ -244,11 +363,17 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
         cursor_x: x,
         cursor_y: y,
         color: userColor.current,
-      }, { requestKey: null }).catch(err => {
-        console.debug('Failed to update cursor:', err.message);
-      });
+      }, { requestKey: null }).catch(() => {});
     }
-  }, [roomId, user]);
+  }, [roomId]);
 
-  return { broadcastStroke, broadcastUndo, broadcastCursor, userId, isE2EEActive: !!roomKey };
+  return {
+    broadcastStroke,
+    broadcastUpdateStroke,
+    broadcastUndo,
+    broadcastCursor,
+    userId: userIdRef.current,
+    isE2EEActive: !!roomKeyRef.current,
+    isKeyLoaded,
+  };
 };

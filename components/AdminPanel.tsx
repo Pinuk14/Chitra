@@ -36,10 +36,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
       try {
         const allMembers = await pb.collection('room_members').getFullList({
           filter: `room_id = "${roomId}"`,
-          sort: 'created',
+          sort: '-created',
           requestKey: null,
         });
-        setMembers(allMembers);
+        
+        // Deduplicate by user_id (keeps the newest record due to sort: '-created')
+        const uniqueMembers: any[] = [];
+        const seen = new Set();
+        for (const rec of allMembers) {
+          if (!seen.has(rec.user_id)) {
+            seen.add(rec.user_id);
+            uniqueMembers.push(rec);
+          }
+        }
+        setMembers(uniqueMembers);
 
         const perms = await pb.collection('permission_requests').getFullList({
           filter: `room_id = "${roomId}" && status = "pending"`,

@@ -72,9 +72,16 @@ export async function encryptData(payload: any, specificKey?: CryptoKey): Promis
   }
 }
 
-export async function decryptData(encryptedText: string, specificKey?: CryptoKey): Promise<any> {
+export async function decryptData(encryptedText: string | any, specificKey?: CryptoKey): Promise<any> {
+  if (typeof encryptedText !== 'string') {
+    if (encryptedText && typeof encryptedText.payload === 'string') {
+      encryptedText = encryptedText.payload;
+    } else {
+      return encryptedText;
+    }
+  }
   if (typeof crypto === 'undefined' || !crypto.subtle) {
-    try { return JSON.parse(encryptedText); } catch { return null; }
+    try { return JSON.parse(encryptedText); } catch { return encryptedText; }
   }
   if (!encryptedText.includes(':')) {
     try { return JSON.parse(encryptedText); } catch { return encryptedText; }

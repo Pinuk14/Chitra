@@ -1,5 +1,5 @@
-1. refreshing the page bugs with how the undo button works
-
-2. Auto assign colors to users and thir cursor
-
-3.
+add ons: 
+1. on the login page lets add some more bold and unstructured random scribble patterns animations
+2. add a page after logging in where you can view the ongoing canvas of yours, you can also edit them from there also give them a name by which it can be exported by default, (can change the name only by admin)
+3. Improve the notification window which pops up ater we click the clear button on the toolbox, make it custom which suits the theme of ours
+4. Add the Chitra_logo.png mostly everywhere it suits

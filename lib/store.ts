@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type Tool = 'brush' | 'rectangle' | 'circle' | 'line' | 'text';
+export type Tool = 'select' | 'pan' | 'brush' | 'eraser' | 'rectangle' | 'circle' | 'triangle' | 'line' | 'text' | 'image';
 
 export interface Cursor {
   x: number;
@@ -13,12 +13,27 @@ export interface DrawingState {
   tool: Tool;
   color: string;
   strokeWidth: number;
+  opacity: number;
+  fontFamily: string;
+  fontSize: number;
+  textAlign: 'left' | 'center' | 'right' | 'justify';
+  scale: number;
+  offsetX: number;
+  offsetY: number;
   strokes: Array<any>;
   history: Array<any[]>;
   redoStack: Array<any[]>;
   cursors: Record<string, Cursor>;
+  selectedStrokeId: string | null;
   setTool: (tool: Tool) => void;
+  setSelectedStrokeId: (id: string | null) => void;
   setColor: (color: string) => void;
+  setStrokeWidth: (width: number) => void;
+  setOpacity: (opacity: number) => void;
+  setFontFamily: (fontFamily: string) => void;
+  setFontSize: (fontSize: number) => void;
+  setTextAlign: (textAlign: 'left' | 'center' | 'right' | 'justify') => void;
+  setTransform: (scale: number, offsetX: number, offsetY: number) => void;
   addStroke: (stroke: any) => void;
   undo: () => void;
   redo: () => void;
@@ -27,18 +42,37 @@ export interface DrawingState {
   removeCursor: (userId: string) => void;
   setStrokes: (strokes: any[]) => void;
   removeStroke: (id: string) => void;
+  updateStroke: (id: string, updates: any) => void;
 }
 
 export const useDrawing = create<DrawingState>((set) => ({
   tool: 'brush',
   color: '#565656',
   strokeWidth: 2,
+  opacity: 1,
+  fontFamily: 'sans-serif',
+  fontSize: 24,
+  textAlign: 'left',
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
   strokes: [],
   history: [[]],
   redoStack: [],
   cursors: {},
-  setTool: (tool) => set({ tool }),
+  selectedStrokeId: null,
+  setTool: (tool) => {
+    set({ tool });
+    if (tool !== 'select') set({ selectedStrokeId: null });
+  },
+  setSelectedStrokeId: (id) => set({ selectedStrokeId: id }),
   setColor: (color) => set({ color }),
+  setStrokeWidth: (strokeWidth) => set({ strokeWidth }),
+  setOpacity: (opacity) => set({ opacity }),
+  setFontFamily: (fontFamily) => set({ fontFamily }),
+  setFontSize: (fontSize) => set({ fontSize }),
+  setTextAlign: (textAlign) => set({ textAlign }),
+  setTransform: (scale, offsetX, offsetY) => set({ scale, offsetX, offsetY }),
   addStroke: (stroke) => set((state) => ({
     strokes: [...state.strokes, stroke],
     history: [...state.history, [...state.strokes, stroke]],
@@ -46,6 +80,14 @@ export const useDrawing = create<DrawingState>((set) => ({
   })),
   removeStroke: (id) => set((state) => {
     const newStrokes = state.strokes.filter(s => s.id !== id);
+    return {
+      strokes: newStrokes,
+      history: [...state.history, newStrokes],
+      redoStack: []
+    };
+  }),
+  updateStroke: (id, updates) => set((state) => {
+    const newStrokes = state.strokes.map(s => s.id === id ? { ...s, ...updates } : s);
     return {
       strokes: newStrokes,
       history: [...state.history, newStrokes],
