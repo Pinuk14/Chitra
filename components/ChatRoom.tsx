@@ -12,9 +12,10 @@ interface ChatRoomProps {
   roomId: string;
   role: Role | null;
   memberColor?: string;
+  isMuted?: boolean;
 }
 
-export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor }) => {
+export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor, isMuted }) => {
   const { user } = useAuth();
   const { can } = usePermissions(roomId, role);
   const [messages, setMessages] = useState<any[]>([]);
@@ -111,7 +112,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
   };
 
   return (
-    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-4 w-full h-full flex flex-col">
+    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-4 w-full h-full flex flex-col min-h-0">
       <h3 className="text-sm font-bold text-neo-accent mb-2 pb-2 border-b-2 border-neo-shadow">Chat</h3>
       
       <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2 custom-scrollbar">
@@ -132,7 +133,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
         <div ref={messagesEndRef} />
       </div>
 
-      {can('send_messages') ? (
+      {!isMuted && can('send_messages') ? (
         <form onSubmit={sendMessage} className="flex gap-2">
           <input
             type="text"
@@ -151,7 +152,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
         </form>
       ) : (
         <div className="text-xs text-neo-text/40 text-center py-2">
-          You don&apos;t have permission to send messages
+          {isMuted ? 'You have been muted by an admin' : "You don't have permission to send messages"}
         </div>
       )}
     </div>

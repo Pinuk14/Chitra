@@ -85,10 +85,15 @@ function DashboardContent() {
       setRooms(cards.filter((c): c is RoomCard => c !== null));
     } catch (err: any) {
       console.error('Failed to fetch rooms:', err?.message || JSON.stringify(err, null, 2), err);
+      const errMsg = err?.message || '';
+      if (errMsg.toLowerCase().includes('jwt expired')) {
+        logout();
+        router.push('/login?error=SessionExpired');
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, logout, router]);
 
   useEffect(() => {
     fetchRooms();
@@ -290,7 +295,12 @@ function DashboardContent() {
                     </div>
                   ) : (
                     <>
-                      <p className="font-bold text-neo-text text-sm flex-1 truncate">{room.roomName}</p>
+                      <div className="flex flex-col flex-1 min-w-0">
+                        <p className="font-bold text-neo-text text-sm truncate">{room.roomName}</p>
+                        <p className="text-[10px] text-neo-text/40 truncate font-mono mt-0.5" title="Room ID">
+                          {room.roomId}
+                        </p>
+                      </div>
                       {room.isOwner && (
                         <div className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity flex items-center gap-2 shrink-0">
                           <button

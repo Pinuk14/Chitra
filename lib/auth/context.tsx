@@ -50,6 +50,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
+  loginAnonymously: () => Promise<void>;
   register: (username: string, email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
   updateProfile: (data: Partial<User>) => Promise<void>;
@@ -79,8 +80,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser({
         id: sbUser.id,
         email: sbUser.email || '',
-        username: profile?.username || sbUser.user_metadata?.username || '',
-        name: profile?.name || sbUser.user_metadata?.name || '',
+        username: profile?.username || sbUser.user_metadata?.username || (sbUser.is_anonymous ? `Guest_${sbUser.id.substring(0, 5)}` : ''),
+        name: profile?.name || sbUser.user_metadata?.name || (sbUser.is_anonymous ? 'Guest User' : ''),
         avatar: profile?.avatar || '',
       });
       await initializeUserCrypto(sbUser.id);
@@ -121,6 +122,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       sessionStorage.removeItem('chitra_temp_session');
     }
+  }, []);
+
+  const loginAnonymously = useCallback(async () => {
+    const { error } = await supabase.auth.signInAnonymously();
+    if (error) {
+      throw new Error(error.message || 'Anonymous login failed');
+    }
+    sessionStorage.setItem('chitra_temp_session', 'true');
   }, []);
 
   const register = useCallback(async (username: string, email: string, password: string, name?: string) => {
@@ -181,6 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isAuthenticated: !!user,
       login,
+      loginAnonymously,
       register,
       logout,
       updateProfile,

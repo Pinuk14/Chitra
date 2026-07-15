@@ -184,7 +184,7 @@ export function useRoomAccess(roomId: string): RoomAccessResult {
               room_id: roomId,
               user_id: user.id,
               username: user.username,
-              role: 'member',
+              role: 'editor',
               status: 'pending',
               color,
             })

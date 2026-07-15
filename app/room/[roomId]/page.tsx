@@ -28,6 +28,7 @@ function RoomContent() {
 
   const isAdmin = access.role ? hasPermission(access.role, 'approve_users') : false;
   const memberColor = access.memberRecord?.color;
+  const isMuted = access.memberRecord?.status === 'muted';
 
   // Loading state
   if (access.status === 'loading') {
@@ -95,6 +96,20 @@ function RoomContent() {
           <h1 className="text-3xl text-neo-accent group-hover:opacity-80 transition-opacity" style={{ fontFamily: 'var(--font-brushy)' }}>Chitra</h1>
         </Link>
         <div className="flex gap-3 items-center">
+          <div className="flex items-center gap-2 bg-neo-bg rounded-neo shadow-neo-inset px-3 py-1.5 hidden sm:flex">
+            <span className="text-[10px] text-neo-text/40 font-mono mt-0.5">Room: {roomId}</span>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(roomId);
+                alert('Room ID copied!');
+              }}
+              className="text-[10px] bg-neo-bg px-2 py-1 rounded shadow-neo-sm text-neo-text hover:shadow-neo-md transition-shadow font-bold"
+              title="Copy Room ID"
+            >
+              Copy ID
+            </button>
+          </div>
+
           {isAdmin && (
             <button
               onClick={() => setShowAdmin(!showAdmin)}
@@ -123,8 +138,8 @@ function RoomContent() {
             <Canvas roomId={roomId} role={access.role} memberColor={memberColor} />
           </div>
         </div>
-        <aside className="hidden lg:flex flex-col gap-6 w-72 shrink-0">
-          <ShareRoom roomId={roomId} />
+        <aside className="hidden lg:flex flex-col gap-6 w-72 shrink-0 min-h-0">
+          <ShareRoom roomId={roomId} canInvite={hasPermission(access.role, 'invite_users')} />
           
           {showAdmin && isAdmin ? (
             <div className="flex-1 min-h-[400px]">
@@ -155,7 +170,7 @@ function RoomContent() {
                 {!showChat ? (
                   <UserList roomId={roomId} />
                 ) : (
-                  <ChatRoom roomId={roomId} role={access.role} memberColor={memberColor} />
+                  <ChatRoom roomId={roomId} role={access.role} memberColor={memberColor} isMuted={isMuted} />
                 )}
               </div>
             </>

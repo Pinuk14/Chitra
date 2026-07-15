@@ -13,6 +13,7 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
   const { addStroke, setCursor, removeCursor, setStrokes } = useDrawing();
 
   const lastCursorUpdate = useRef(0);
+  const lastLiveStrokeUpdate = useRef(0);
   const userColor = useRef(memberColor || RANDOM_COLORS[Math.floor(Math.random() * RANDOM_COLORS.length)]);
 
   const roomKeyRef = useRef<CryptoKey | null>(null);
@@ -23,6 +24,7 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
 
   // Supabase channel ref
   const channelRef = useRef<any>(null);
+  const channelConnectedRef = useRef(false);
 
   useEffect(() => {
     userIdRef.current = user?.id || 'anon';
@@ -185,24 +187,51 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
           setCursor(userId, x, y, color, name);
         }
       })
+      .on('broadcast', { event: 'live_stroke' }, async (payload) => {
+        // Handle incoming live strokes
+        const { userId, stroke, signature } = payload.payload;
+        if (userId === userIdRef.current) return;
+
+        try {
+          const decrypted = await tryDecrypt(stroke.payload || stroke);
+          if (decrypted === null || decrypted === undefined) return;
+
+          const incomingStroke = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+          incomingStroke.id = payload.payload.strokeId;
+
+          // Add or update the live stroke in the local state
+          const existingStroke = useDrawing.getState().strokes.find(s => s.id === incomingStroke.id);
+          if (existingStroke) {
+            useDrawing.getState().updateStroke(incomingStroke.id, incomingStroke);
+          } else {
+            addStroke(incomingStroke);
+          }
+        } catch (err) {
+          console.warn('[Sync] Failed to decrypt incoming live stroke', err);
+        }
+      })
       .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
         // When someone leaves, remove their cursor
         removeCursor(key);
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
+          channelConnectedRef.current = true;
           channel.track({
             userId: userIdRef.current,
             name: usernameRef.current,
             color: userColor.current,
             online_at: new Date().toISOString()
           });
+        } else {
+          channelConnectedRef.current = false;
         }
       });
 
     return () => {
       supabase.removeChannel(channel);
       channelRef.current = null;
+      channelConnectedRef.current = false;
     };
   }, [roomId, isKeyLoaded]);
 
@@ -292,7 +321,7 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
   }, [roomId]);
 
   const broadcastCursor = useCallback((x: number, y: number) => {
-    if (!roomId || !channelRef.current) return;
+    if (!roomId || !channelRef.current || !channelConnectedRef.current) return;
     const now = Date.now();
     
     // Broadcast via Supabase Realtime (very lightweight, no DB writes)
@@ -312,9 +341,34 @@ export const useRealtimeSync = (roomId: string, memberColor?: string) => {
     }
   }, [roomId]);
 
+  const broadcastLiveStroke = useCallback(async (stroke: any) => {
+    if (!roomId || !channelRef.current || !channelConnectedRef.current) return;
+    const now = Date.now();
+
+    // Throttle live stroke updates to 50ms
+    if (now - lastLiveStrokeUpdate.current > 50) {
+      lastLiveStrokeUpdate.current = now;
+      try {
+        const encryptedStroke = await encryptData(stroke, roomKeyRef.current || undefined);
+        channelRef.current.send({
+          type: 'broadcast',
+          event: 'live_stroke',
+          payload: {
+            userId: userIdRef.current,
+            strokeId: stroke.id,
+            stroke: { payload: encryptedStroke },
+          }
+        }).catch(() => {});
+      } catch (err) {
+        console.warn('[Sync] Failed to encrypt live stroke:', err);
+      }
+    }
+  }, [roomId]);
+
   return {
     broadcastStroke,
     broadcastUpdateStroke,
+    broadcastLiveStroke,
     broadcastUndo,
     broadcastCursor,
     userId: userIdRef.current,

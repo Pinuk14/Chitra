@@ -26,16 +26,24 @@ const INK_DROPS = [
 ];
 
 export default function LoginPage() {
-  const { login, isAuthenticated } = useAuth();
+  const { login, loginAnonymously, isAuthenticated } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGuestSubmitting, setIsGuestSubmitting] = useState(false);
 
   React.useEffect(() => {
     if (isAuthenticated) router.replace('/dashboard');
+    
+    // Professionally handle session expiration query param
+    if (typeof window !== 'undefined' && window.location.search.includes('error=SessionExpired')) {
+      setError('Your session has expired. Please log in again.');
+      // Clean up the URL without triggering a page reload
+      window.history.replaceState({}, '', '/login');
+    }
   }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -53,6 +61,19 @@ export default function LoginPage() {
       setError(err.message || 'Invalid credentials');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGuestLogin = async () => {
+    setError('');
+    setIsGuestSubmitting(true);
+    try {
+      await loginAnonymously();
+      router.push('/dashboard');
+    } catch (err: any) {
+      setError(err.message || 'Failed to enter guest mode');
+    } finally {
+      setIsGuestSubmitting(false);
     }
   };
 
@@ -190,10 +211,27 @@ export default function LoginPage() {
             <span className="text-sm text-neo-text">Keep me logged in</span>
           </label>
 
-          <button type="submit" disabled={isSubmitting}
-            className="neo-button w-full text-center font-bold disabled:opacity-50 disabled:cursor-not-allowed">
-            {isSubmitting ? 'Signing in...' : 'Sign In'}
-          </button>
+          <div className="flex flex-col gap-3">
+            <button type="submit" disabled={isSubmitting || isGuestSubmitting}
+              className="neo-button w-full text-center font-bold disabled:opacity-50 disabled:cursor-not-allowed">
+              {isSubmitting ? 'Signing in...' : 'Sign In'}
+            </button>
+            
+            <div className="flex items-center gap-4 my-2">
+              <div className="flex-1 h-px bg-neo-text/20"></div>
+              <span className="text-xs font-bold text-neo-text/40 uppercase tracking-widest">or</span>
+              <div className="flex-1 h-px bg-neo-text/20"></div>
+            </div>
+            
+            <button 
+              type="button" 
+              onClick={handleGuestLogin}
+              disabled={isSubmitting || isGuestSubmitting}
+              className="bg-transparent border-2 border-dashed border-neo-accent text-neo-accent w-full text-center py-2.5 rounded-neo font-bold hover:bg-neo-accent hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isGuestSubmitting ? 'Entering...' : 'Play as Guest (Beta Testing)'}
+            </button>
+          </div>
         </form>
 
         <div className="mt-6 text-center">

@@ -22,7 +22,7 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     strokes, addStroke, updateStroke, removeStroke, cursors, setTool,
     selectedStrokeId, setSelectedStrokeId
   } = useDrawing();
-  const { broadcastStroke, broadcastUpdateStroke, broadcastCursor, broadcastUndo, isKeyLoaded } = useRealtimeSync(roomId, memberColor);
+  const { broadcastStroke, broadcastUpdateStroke, broadcastLiveStroke, broadcastCursor, broadcastUndo, isKeyLoaded } = useRealtimeSync(roomId, memberColor);
   const { can, requestPermission } = usePermissions(roomId, role);
   
   const [deniedAction, setDeniedAction] = useState<Action | null>(null);
@@ -42,6 +42,7 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
   const dragStartPoint = useRef<{x: number, y: number} | null>(null);
   const originalStrokeState = useRef<any>(null);
 
+  const currentStrokeId = useRef<string | null>(null);
   const currentPoints = useRef<{x: number, y: number}[]>([]);
   const startPoint = useRef<{x: number, y: number} | null>(null);
   const clipboardStroke = useRef<any>(null);
@@ -232,6 +233,19 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     return { x: 0, y: 0, width: 0, height: 0 };
   };
 
+  const getCenter = (stroke: any) => {
+    const box = getBoundingBox(stroke);
+    return { cx: box.x + box.width / 2, cy: box.y + box.height / 2 };
+  };
+
+  const getRotatedPoint = (x: number, y: number, cx: number, cy: number, angle: number) => {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const nx = (cos * (x - cx)) - (sin * (y - cy)) + cx;
+    const ny = (sin * (x - cx)) + (cos * (y - cy)) + cy;
+    return { x: nx, y: ny };
+  };
+
   const isPointInBox = (x: number, y: number, box: {x: number, y: number, width: number, height: number}) => {
     return x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height;
   };
@@ -256,6 +270,9 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
         { id: 's', x: box.x + box.width / 2, y: box.y + box.height },
         { id: 'se', x: box.x + box.width, y: box.y + box.height },
       ];
+      if (stroke && stroke.type !== 'line') {
+        handles.push({ id: 'rotate', x: box.x + box.width / 2, y: box.y - 30 / scale });
+      }
     }
 
     for (const h of handles) {
@@ -268,7 +285,15 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
 
   const drawBoundingBox = (ctx: CanvasRenderingContext2D, stroke: any) => {
     const box = getBoundingBox(stroke);
+    const center = getCenter(stroke);
+    
     ctx.save();
+    
+    if (stroke.rotation) {
+      ctx.translate(center.cx, center.cy);
+      ctx.rotate(stroke.rotation);
+      ctx.translate(-center.cx, -center.cy);
+    }
     
     if (stroke.type === 'line') {
       ctx.strokeStyle = '#6C63FF';
@@ -306,6 +331,20 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       drawHandle(box.x, box.y + box.height);
       drawHandle(box.x + box.width / 2, box.y + box.height);
       drawHandle(box.x + box.width, box.y + box.height);
+      
+      // Draw rotation handle
+      const rx = box.x + box.width / 2;
+      const ry = box.y - 30 / scale;
+      
+      ctx.beginPath();
+      ctx.moveTo(rx, box.y);
+      ctx.lineTo(rx, ry);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.arc(rx, ry, 5 / scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
 
     ctx.restore();
@@ -327,6 +366,14 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
 
   const drawShape = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, shape: any) => {
     ctx.save();
+    
+    if (shape.rotation) {
+      const center = getCenter(shape);
+      ctx.translate(center.cx, center.cy);
+      ctx.rotate(shape.rotation);
+      ctx.translate(-center.cx, -center.cy);
+    }
+    
     ctx.globalAlpha = shape.opacity !== undefined ? shape.opacity : 1;
     ctx.strokeStyle = shape.color || '#565656';
     ctx.lineWidth = shape.strokeWidth || 2;
@@ -570,11 +617,19 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
         const selectedStroke = strokes.find(s => s.id === selectedStrokeId);
         if (selectedStroke) {
           const box = getBoundingBox(selectedStroke);
-          hitHandle = getResizeHandle(x, y, box, selectedStroke);
+          let testX = x, testY = y;
+          if (selectedStroke.rotation) {
+            const center = getCenter(selectedStroke);
+            const pt = getRotatedPoint(x, y, center.cx, center.cy, -selectedStroke.rotation);
+            testX = pt.x;
+            testY = pt.y;
+          }
+          
+          hitHandle = getResizeHandle(testX, testY, box, selectedStroke);
           if (hitHandle) {
             hitId = selectedStrokeId;
             activeHandle.current = hitHandle;
-          } else if (isPointInBox(x, y, box)) {
+          } else if (isPointInBox(testX, testY, box)) {
             hitId = selectedStrokeId;
           }
         }
@@ -583,8 +638,16 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       if (!hitId) {
         for (let i = strokes.length - 1; i >= 0; i--) {
           if (strokes[i].type === 'eraser') continue;
+          let testX = x, testY = y;
+          if (strokes[i].rotation) {
+            const center = getCenter(strokes[i]);
+            const pt = getRotatedPoint(x, y, center.cx, center.cy, -strokes[i].rotation);
+            testX = pt.x;
+            testY = pt.y;
+          }
+          
           const box = getBoundingBox(strokes[i]);
-          if (isPointInBox(x, y, box)) {
+          if (isPointInBox(testX, testY, box)) {
             hitId = strokes[i].id;
             break;
           }
@@ -605,6 +668,7 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     activeHandle.current = null;
     isDrawing.current = true;
     startPoint.current = { x, y };
+    currentStrokeId.current = generateId();
 
     if (tool === 'brush') {
       currentPoints.current = [{ x, y }];
@@ -644,8 +708,15 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     let hitId: string | null = null;
     for (let i = strokes.length - 1; i >= 0; i--) {
       if (strokes[i].type === 'eraser') continue;
+      let testX = x, testY = y;
+      if (strokes[i].rotation) {
+        const center = getCenter(strokes[i]);
+        const pt = getRotatedPoint(x, y, center.cx, center.cy, -strokes[i].rotation);
+        testX = pt.x;
+        testY = pt.y;
+      }
       const box = getBoundingBox(strokes[i]);
-      if (isPointInBox(x, y, box)) {
+      if (isPointInBox(testX, testY, box)) {
         hitId = strokes[i].id;
         break;
       }
@@ -684,10 +755,20 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       const stroke = strokes.find(s => s.id === selectedStrokeId);
       if (stroke) {
         const box = getBoundingBox(stroke);
-        const handle = getResizeHandle(x, y, box);
-        if (handle) {
+        let testX = x, testY = y;
+        if (stroke.rotation) {
+          const center = getCenter(stroke);
+          const pt = getRotatedPoint(x, y, center.cx, center.cy, -stroke.rotation);
+          testX = pt.x;
+          testY = pt.y;
+        }
+        
+        const handle = getResizeHandle(testX, testY, box, stroke);
+        if (handle === 'rotate') {
+          canvas.style.cursor = 'grab'; // Use grab for rotation
+        } else if (handle) {
           canvas.style.cursor = `${handle}-resize`;
-        } else if (isPointInBox(x, y, box)) {
+        } else if (isPointInBox(testX, testY, box)) {
           canvas.style.cursor = 'move';
         } else {
           canvas.style.cursor = 'default';
@@ -695,15 +776,32 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       }
 
       if (isDraggingStroke.current && dragStartPoint.current && originalStrokeState.current) {
-        const dx = x - dragStartPoint.current.x;
-        const dy = y - dragStartPoint.current.y;
-        
         let updates: any = {};
         const orig = originalStrokeState.current;
         const curHandle = activeHandle.current;
 
-        if (curHandle) {
-           // Resizing logic can be complex depending on shape. For simplicity, if it's rect/image, scale width/height.
+        if (curHandle === 'rotate') {
+          const center = getCenter(orig);
+          const angle = Math.atan2(y - center.cy, x - center.cx);
+          updates.rotation = angle + Math.PI / 2;
+        } else if (curHandle) {
+          let curX = x, curY = y;
+          let startX = dragStartPoint.current.x, startY = dragStartPoint.current.y;
+          
+          if (orig.rotation) {
+            const center = getCenter(orig);
+            const pCur = getRotatedPoint(curX, curY, center.cx, center.cy, -orig.rotation);
+            const pStart = getRotatedPoint(startX, startY, center.cx, center.cy, -orig.rotation);
+            curX = pCur.x;
+            curY = pCur.y;
+            startX = pStart.x;
+            startY = pStart.y;
+          }
+          
+          const dx = curX - startX;
+          const dy = curY - startY;
+
+          // Resizing logic can be complex depending on shape. For simplicity, if it's rect/image, scale width/height.
            if (orig.type === 'rectangle' || orig.type === 'image') {
               if (curHandle.includes('e')) updates.width = Math.max(10, orig.width + dx);
               if (curHandle.includes('s')) updates.height = Math.max(10, orig.height + dy);
@@ -785,9 +883,12 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
                 x: origBox.x + shiftX + (p.x - origBox.x) * scaleX,
                 y: origBox.y + shiftY + (p.y - origBox.y) * scaleY
               }));
-           }
+            }
         } else {
            // Dragging logic
+           const dx = x - dragStartPoint.current.x;
+           const dy = y - dragStartPoint.current.y;
+           
            if (orig.type === 'brush' || orig.type === 'eraser') {
              updates.points = orig.points.map((p: any) => ({ x: p.x + dx, y: p.y + dy }));
            } else if (orig.type === 'rectangle' || orig.type === 'image' || orig.type === 'text' || orig.type === 'triangle') {
@@ -805,6 +906,12 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
         }
 
         updateStroke(selectedStrokeId, updates);
+        
+        // Broadcast live updates while dragging
+        const updatedStroke = { ...strokes.find(s => s.id === selectedStrokeId), ...updates };
+        if (updatedStroke.id) {
+          broadcastLiveStroke(updatedStroke);
+        }
       }
       return;
     }
@@ -835,6 +942,16 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
         ctx.stroke();
       }
       ctx.restore();
+      
+      // Broadcast live brush stroke
+      broadcastLiveStroke({
+        id: currentStrokeId.current,
+        type: tool,
+        points: currentPoints.current,
+        color,
+        strokeWidth,
+        opacity,
+      });
     } else if (tool === 'eraser') {
       for (let i = strokes.length - 1; i >= 0; i--) {
         const box = getBoundingBox(strokes[i]);
@@ -867,8 +984,11 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
         previewShape = { ...previewShape, x: startX, y: startY, width: x - startX, height: y - startY };
       }
       
+      previewShape.id = currentStrokeId.current;
       drawShape(ctx, canvas, previewShape);
       ctx.restore();
+      
+      broadcastLiveStroke(previewShape);
     }
   };
 
@@ -900,7 +1020,7 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     if (tool === 'brush') {
       if (currentPoints.current.length > 0) {
         const newStroke = {
-          id: generateId(),
+          id: currentStrokeId.current || generateId(),
           type: tool,
           points: currentPoints.current,
           color,
@@ -916,14 +1036,14 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       
       let newStroke: any = null;
       if (tool === 'rectangle') {
-        newStroke = { id: generateId(), type: 'rectangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth, opacity };
+        newStroke = { id: currentStrokeId.current || generateId(), type: 'rectangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth, opacity };
       } else if (tool === 'circle') {
         const radius = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
-        newStroke = { id: generateId(), type: 'circle', cx: startX, cy: startY, radius, color, strokeWidth, opacity };
+        newStroke = { id: currentStrokeId.current || generateId(), type: 'circle', cx: startX, cy: startY, radius, color, strokeWidth, opacity };
       } else if (tool === 'line') {
-        newStroke = { id: generateId(), type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color, strokeWidth, opacity };
+        newStroke = { id: currentStrokeId.current || generateId(), type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color, strokeWidth, opacity };
       } else if (tool === 'triangle') {
-        newStroke = { id: generateId(), type: 'triangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth, opacity };
+        newStroke = { id: currentStrokeId.current || generateId(), type: 'triangle', x: startX, y: startY, width: endX - startX, height: endY - startY, color, strokeWidth, opacity };
       }
 
       if (newStroke) {
@@ -974,9 +1094,17 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     for (let i = strokes.length - 1; i >= 0; i--) {
       const stroke = strokes[i];
       if (stroke.type === 'text' || ['rectangle', 'circle', 'triangle'].includes(stroke.type)) {
+        let testX = x, testY = y;
+        if (stroke.rotation) {
+          const center = getCenter(stroke);
+          const pt = getRotatedPoint(x, y, center.cx, center.cy, -stroke.rotation);
+          testX = pt.x;
+          testY = pt.y;
+        }
+        
         const box = getBoundingBox(stroke);
         const paddedBox = { x: box.x - 5, y: box.y - 5, width: box.width + 10, height: box.height + 10 };
-        if (isPointInBox(x, y, paddedBox)) {
+        if (isPointInBox(testX, testY, paddedBox)) {
           setTextInput({
             id: stroke.id,
             x: stroke.type === 'text' ? stroke.x * scale + offsetX : (box.x + box.width/2) * scale + offsetX - 100,

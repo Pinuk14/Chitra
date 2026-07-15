@@ -51,7 +51,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
 
       const { data: perms } = await supabase
         .from('permission_requests')
-        .select('*, profiles(username)')
+        .select('*, profiles!permission_requests_user_id_fkey(username)')
         .eq('room_id', roomId)
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
@@ -228,7 +228,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
                         className="text-[10px] bg-neo-bg rounded shadow-neo-sm px-1 py-0.5 text-neo-text border-0 outline-none"
                       >
                         <option value="viewer">Viewer</option>
-                        <option value="member">Member</option>
+                        <option value="editor">Editor</option>
                         <option value="admin">Admin</option>
                       </select>
                     )}

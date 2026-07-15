@@ -1,0 +1,1 @@
+after using the chat for too long the canvas got streched out with the chatroom's container
