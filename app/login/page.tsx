@@ -28,7 +28,7 @@ const INK_DROPS = [
 export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const router = useRouter();
-  const [identity, setIdentity] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
@@ -41,13 +41,13 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!identity.trim() || !password.trim()) {
+    if (!email.trim() || !password.trim()) {
       setError('Please fill in all fields');
       return;
     }
     setIsSubmitting(true);
     try {
-      await login(identity.trim(), password, rememberMe);
+      await login(email.trim(), password, rememberMe);
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Invalid credentials');
@@ -158,11 +158,15 @@ export default function LoginPage() {
           )}
 
           <div className="flex flex-col gap-2">
-            <label htmlFor="identity" className="text-sm font-medium text-neo-text">Username or Email</label>
-            <input id="identity" type="text" value={identity}
-              onChange={(e) => setIdentity(e.target.value)}
-              className="neo-input w-full" placeholder="Enter username or email"
-              autoComplete="username" disabled={isSubmitting} />
+            <label htmlFor="email" className="text-sm font-medium text-neo-text">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="neo-input w-full"
+              placeholder="Enter email"
+              autoComplete="email" disabled={isSubmitting} />
           </div>
 
           <div className="flex flex-col gap-2">

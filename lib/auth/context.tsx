@@ -1,19 +1,13 @@
 'use client';
 
 /**
- * Authentication Context Provider
- * 
- * DESIGN DECISION: Uses PocketBase's built-in authStore which handles
- * token management, auto-refresh, and secure storage. The "Keep me logged in"
- * feature controls whether authStore persists to localStorage.
- * 
- * This context is the SINGLE entry point for all auth operations.
- * Components should never call pb.collection('users').auth* directly.
+ * Authentication Context Provider (Supabase)
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { pb } from '@/lib/api';
+import { supabase } from '@/lib/api';
 import { generateUserExchangeKeyPair, generateSigningKeyPair, exportKeyAsJWK } from '@/lib/security/crypto';
+import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 
 async function initializeUserCrypto(userId: string) {
   if (typeof window === 'undefined') return;
@@ -34,10 +28,10 @@ async function initializeUserCrypto(userId: string) {
     localStorage.setItem(`crypto_ex_${userId}`, JSON.stringify(privExJwk));
     localStorage.setItem(`crypto_sign_${userId}`, JSON.stringify(privSignJwk));
 
-    await pb.collection('users').update(userId, {
+    await supabase.from('profiles').update({
       public_key_exchange: JSON.stringify(pubExJwk),
       public_key_sign: JSON.stringify(pubSignJwk)
-    });
+    }).eq('id', userId);
   } catch (err) {
     console.error('Failed to initialize user crypto:', err);
   }
@@ -55,7 +49,7 @@ interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (identity: string, password: string, rememberMe?: boolean) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   register: (username: string, email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
   updateProfile: (data: Partial<User>) => Promise<void>;
@@ -67,108 +61,114 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Map PocketBase auth model to our User interface
-  const mapUser = useCallback((model: any): User | null => {
-    if (!model) return null;
-    return {
-      id: model.id,
-      username: model.username || '',
-      email: model.email || '',
-      name: model.name || model.username || '',
-      avatar: model.avatar || '',
-    };
+  // Map Supabase auth and profile to our User interface
+  const fetchAndSetUser = useCallback(async (sbUser: SupabaseUser | null) => {
+    if (!sbUser) {
+      setUser(null);
+      return;
+    }
+
+    try {
+      // Fetch profile data
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', sbUser.id)
+        .single();
+
+      setUser({
+        id: sbUser.id,
+        email: sbUser.email || '',
+        username: profile?.username || sbUser.user_metadata?.username || '',
+        name: profile?.name || sbUser.user_metadata?.name || '',
+        avatar: profile?.avatar || '',
+      });
+      await initializeUserCrypto(sbUser.id);
+    } catch (err) {
+      console.error('Error fetching user profile:', err);
+      setUser(null);
+    }
   }, []);
 
-  // Initialize auth state from PocketBase's authStore
   useEffect(() => {
-    const model = pb.authStore.record;
-    if (pb.authStore.isValid && model) {
-      setUser(mapUser(model));
-      initializeUserCrypto(model.id);
-    }
-    setIsLoading(false);
+    // Initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      fetchAndSetUser(session?.user || null).finally(() => setIsLoading(false));
+    });
 
     // Listen for auth state changes
-    const unsubscribe = pb.authStore.onChange((_token, model) => {
-      setUser(mapUser(model));
-      if (model) {
-        initializeUserCrypto(model.id);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      fetchAndSetUser(session?.user || null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [fetchAndSetUser]);
+
+  const login = useCallback(async (email: string, password: string, rememberMe = false) => {
+    // Supabase signInWithPassword natively requires email
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    
+    if (error) {
+      throw new Error(error.message || 'Login failed');
+    }
+
+    // Temporary session handling (Supabase persists by default)
+    if (!rememberMe) {
+      sessionStorage.setItem('chitra_temp_session', 'true');
+    } else {
+      sessionStorage.removeItem('chitra_temp_session');
+    }
+  }, []);
+
+  const register = useCallback(async (username: string, email: string, password: string, name?: string) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          username,
+          name: name || username
+        }
       }
     });
 
-    return () => unsubscribe();
-  }, [mapUser]);
-
-  const login = useCallback(async (identity: string, password: string, rememberMe = false) => {
-    try {
-      const result = await pb.collection('users').authWithPassword(identity, password);
-      setUser(mapUser(result.record));
-      await initializeUserCrypto(result.record.id);
-
-      // If "Keep me logged in" is NOT checked, mark session as temporary.
-      // PocketBase SDK persists to localStorage by default. For non-persistent sessions,
-      // we'll clear the auth on the next tab close via beforeunload.
-      if (!rememberMe) {
-        sessionStorage.setItem('chitra_temp_session', 'true');
-      } else {
-        sessionStorage.removeItem('chitra_temp_session');
+    if (error) {
+      if (error.message.includes('User already registered')) {
+         throw new Error('Email is already registered');
       }
-    } catch (err: any) {
-      const message = err?.response?.message || err?.message || 'Login failed';
-      throw new Error(message);
+      throw new Error(error.message || 'Registration failed');
     }
-  }, [mapUser]);
+  }, []);
 
-  const register = useCallback(async (username: string, email: string, password: string, name?: string) => {
-    try {
-      // Create the user account
-      await pb.collection('users').create({
-        username,
-        email,
-        password,
-        passwordConfirm: password,
-        name: name || username,
-      });
-
-      // Auto-login after registration
-      const result = await pb.collection('users').authWithPassword(username, password);
-      setUser(mapUser(result.record));
-      await initializeUserCrypto(result.record.id);
-    } catch (err: any) {
-      // Extract validation errors from PocketBase response
-      const data = err?.response?.data;
-      if (data) {
-        if (data.username?.code === 'validation_not_unique') {
-          throw new Error('Username is already taken');
-        }
-        if (data.email?.code === 'validation_not_unique') {
-          throw new Error('Email is already registered');
-        }
-        if (data.password?.message) {
-          throw new Error(data.password.message);
-        }
-      }
-      throw new Error(err?.message || 'Registration failed');
-    }
-  }, [mapUser]);
-
-  const logout = useCallback(() => {
-    pb.authStore.clear();
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
     setUser(null);
     sessionStorage.removeItem('chitra_temp_session');
   }, []);
 
   const updateProfile = useCallback(async (data: Partial<User>) => {
     if (!user) throw new Error('Not authenticated');
-    const updated = await pb.collection('users').update(user.id, data);
-    setUser(mapUser(updated));
-  }, [user, mapUser]);
+    
+    const { error } = await supabase.from('profiles').update(data).eq('id', user.id);
+    if (error) throw new Error(error.message);
+    
+    setUser(prev => prev ? { ...prev, ...data } : null);
+  }, [user]);
 
   // Handle temporary sessions — clear auth when tab closes
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (sessionStorage.getItem('chitra_temp_session') === 'true') {
-        pb.authStore.clear();
+        // We can't await inside beforeunload, so we just clear local storage tokens
+        // Supabase uses 'sb-[project]-auth-token'
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
+            localStorage.removeItem(key);
+          }
+        });
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);

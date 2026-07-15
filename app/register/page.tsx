@@ -14,6 +14,7 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   // Redirect if already logged in
   React.useEffect(() => {
@@ -77,13 +78,39 @@ export default function RegisterPage() {
     setIsSubmitting(true);
     try {
       await register(username.trim(), email.trim(), password);
-      router.push('/');
+      setIsSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Registration failed');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  if (isSuccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8">
+        <div className="neo-card w-full max-w-md text-center">
+          <h1 className="text-4xl text-neo-accent mb-6" style={{ fontFamily: 'var(--font-brushy)' }}>
+            Chitra
+          </h1>
+          <div className="w-16 h-16 bg-green-500/15 rounded-full flex items-center justify-center mx-auto mb-4 text-green-500 shadow-neo-sm">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-neo-text mb-2">Check your email</h2>
+          <p className="text-neo-text/70 mb-8 leading-relaxed">
+            We've sent a verification link to <br/>
+            <strong className="text-neo-text">{email}</strong>.<br/>
+            Please verify your email to log in.
+          </p>
+          <Link href="/login" className="neo-button w-full inline-block font-bold">
+            Go to Login
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8">

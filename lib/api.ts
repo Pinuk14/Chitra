@@ -1,15 +1,24 @@
-import PocketBase from 'pocketbase';
+import { createClient } from '@supabase/supabase-js';
 
-// Detect if we should use HTTPS based on the window location (if in browser)
-let pbUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL || 'http://localhost:8090';
-if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-  pbUrl = pbUrl.replace('http://', 'https://');
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+if (!supabaseUrl || !supabaseKey) {
+  console.warn('Missing Supabase environment variables. App will not function correctly.');
 }
 
-export const pb = new PocketBase(pbUrl);
+export const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Provide a mock auth object for backward compatibility during migration, 
+// though we will be rewriting auth/context.tsx to use Supabase natively.
 export const auth = {
-  login: (email: string, password: string) =>
-    pb.collection('users').authWithPassword(email, password),
-  logout: () => pb.authStore.clear(),
+  login: async (email: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    return data;
+  },
+  logout: async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+  }
 };

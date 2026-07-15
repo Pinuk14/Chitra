@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { pb } from '@/lib/api';
+import React, { useEffect, useState, useCallback } from 'react';
+import { supabase } from '@/lib/api';
 
 interface UserListProps {
   roomId: string;
@@ -8,40 +8,44 @@ interface UserListProps {
 export const UserList: React.FC<UserListProps> = ({ roomId }) => {
   const [members, setMembers] = useState<any[]>([]);
 
-  useEffect(() => {
-    // Fetch active room members
-    const fetchMembers = () => {
-      pb.collection('room_members')
-        .getFullList({ filter: `room_id="${roomId}" && (status="active" || status="muted")`, requestKey: null })
-        .then((records) => {
-          // Deduplicate by user_id
-          const uniqueMembers: any[] = [];
-          const seen = new Set();
-          for (const rec of records) {
-            if (!seen.has(rec.user_id)) {
-              seen.add(rec.user_id);
-              uniqueMembers.push(rec);
-            }
-          }
-          setMembers(uniqueMembers);
-        })
-        .catch(() => {});
-    };
+  const fetchMembers = useCallback(async () => {
+    try {
+      const { data: records } = await supabase
+        .from('room_members')
+        .select('*')
+        .eq('room_id', roomId)
+        .in('status', ['active', 'muted'])
+        .order('joined_at', { ascending: false });
 
+      if (records) {
+        // Deduplicate by user_id
+        const uniqueMembers: any[] = [];
+        const seen = new Set();
+        for (const rec of records) {
+          if (!seen.has(rec.user_id)) {
+            seen.add(rec.user_id);
+            uniqueMembers.push(rec);
+          }
+        }
+        setMembers(uniqueMembers);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
     fetchMembers();
 
     // Subscribe to changes
-    let unsubscribe: (() => void) | undefined;
-    pb.collection('room_members').subscribe('*', (e) => {
-      if (e.record.room_id === roomId) fetchMembers();
-    }).then(unsub => {
-      unsubscribe = unsub;
-    });
+    const channel = supabase.channel(`userlist:${roomId}-${Math.random()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_members', filter: `room_id=eq.${roomId}` }, () => fetchMembers())
+      .subscribe();
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      supabase.removeChannel(channel);
     };
-  }, [roomId]);
+  }, [roomId, fetchMembers]);
 
   return (
     <div className="bg-neo-bg rounded-neo shadow-neo-sm p-6 w-full h-full">

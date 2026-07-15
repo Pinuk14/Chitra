@@ -3,7 +3,7 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
 import { useDrawing, Tool } from '@/lib/store';
 import { Button } from './ui/Button';
-import { pb } from '@/lib/api';
+import { supabase } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/lib/auth/context';
 import { PermissionDeniedDialog } from './PermissionDeniedDialog';
@@ -63,7 +63,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
     undo();
 
     if (removedStroke?.id && roomId) {
-       await pb.collection('drawings').delete(removedStroke.id).catch(() => {});
+       const { error } = await supabase.from('drawings').delete().eq('id', removedStroke.id);
+       if (error) console.error('Failed to delete stroke:', error);
     }
   }, [roomId, undo]);
 
@@ -73,21 +74,20 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
 
   const executeClear = async () => {
     setShowConfirmClear(false);
-    const state = useDrawing.getState();
-    const strokes = state.strokes;
     if (roomId) {
-      strokes.forEach((stroke) => {
-        if (stroke.id) {
-          pb.collection('drawings').delete(stroke.id).catch(() => {});
-        }
-      });
+      const { error } = await supabase.from('drawings').delete().eq('room_id', roomId);
+      if (error) console.error('Failed to clear drawings:', error);
     }
     clearCanvas();
   };
 
   const handleExport = async () => {
     const state = useDrawing.getState();
-    const roomName = roomId ? (await pb.collection('rooms').getOne(roomId, { requestKey: null })).name : 'Local Room';
+    let roomName = 'Local Room';
+    if (roomId) {
+      const { data: room } = await supabase.from('rooms').select('name').eq('id', roomId).single();
+      if (room?.name) roomName = room.name;
+    }
     
     await exportBoardToImage(
       state.strokes, 

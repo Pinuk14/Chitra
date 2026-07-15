@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
-import { pb } from '@/lib/api';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { supabase } from '@/lib/api';
 import { useAuth } from '@/lib/auth/context';
 import { usePermissions } from '@/hooks/usePermissions';
 import { checkRateLimit } from '@/lib/security/rate-limiter';
@@ -21,47 +21,60 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch initial messages
-  useEffect(() => {
-    pb.collection('messages')
-      .getFullList({ filter: `room_id="${roomId}"`, sort: 'created', requestKey: null })
-      .then(async (records) => {
-        const decryptedRecords = [];
-        for (const r of records) {
-          try {
-            const dec = await decryptData(r.text);
-            decryptedRecords.push({ ...r, text: dec || r.text });
-          } catch (e) {
-            decryptedRecords.push(r);
-          }
-        }
-        setMessages(decryptedRecords);
-      })
-      .catch(() => {});
+  const fetchMessages = useCallback(async () => {
+    try {
+      const { data: records } = await supabase
+        .from('messages')
+        .select('*, profiles(username)')
+        .eq('room_id', roomId)
+        .order('created_at', { ascending: true });
+        
+      if (!records) return;
 
-    // Subscribe to new messages
-    let unsubscribe: (() => void) | undefined;
-    pb.collection('messages').subscribe('*', async (e) => {
-      if (e.action === 'create' && e.record.room_id === roomId) {
+      const decryptedRecords = [];
+      for (const r of records) {
         try {
-          const dec = await decryptData(e.record.text);
-          const decryptedRecord = { ...e.record, text: dec || e.record.text };
+          const dec = await decryptData(r.text);
+          decryptedRecords.push({ ...r, text: dec || r.text, user_name: r.profiles?.username || 'Anonymous' });
+        } catch (e) {
+          decryptedRecords.push({ ...r, user_name: r.profiles?.username || 'Anonymous' });
+        }
+      }
+      setMessages(decryptedRecords);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
+    fetchMessages();
+
+    const channel = supabase.channel(`messages:${roomId}-${Math.random()}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` }, async (payload) => {
+        const record = payload.new as any;
+        
+        // Fetch the user's name since it's not in the payload
+        const { data: profile } = await supabase.from('profiles').select('username').eq('id', record.user_id).single();
+        const userName = profile?.username || 'Anonymous';
+        
+        try {
+          const dec = await decryptData(record.text);
+          const decryptedRecord = { ...record, text: dec || record.text, user_name: userName };
           setMessages((prev) => {
-            if (prev.some(m => m.id === e.record.id)) return prev;
+            if (prev.some(m => m.id === record.id)) return prev;
             return [...prev, decryptedRecord];
           });
         } catch (err) {
           // Fallback
+          setMessages((prev) => [...prev, { ...record, user_name: userName }]);
         }
-      }
-    }).then(unsub => {
-      unsubscribe = unsub;
-    });
+      })
+      .subscribe();
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      supabase.removeChannel(channel);
     };
-  }, [roomId]);
+  }, [roomId, fetchMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -80,15 +93,16 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
 
     try {
       const encryptedText = await encryptData(input.trim());
-      const record = await pb.collection('messages').create({
+      const { data: record, error } = await supabase.from('messages').insert({
         room_id: roomId,
         user_id: user.id,
-        user_name: user.username,
         text: encryptedText,
         color: memberColor || '#565656',
-      }, { requestKey: null });
+      }).select().single();
       
-      const localRecord = { ...record, text: input.trim() };
+      if (error) throw error;
+      
+      const localRecord = { ...record, text: input.trim(), user_name: user.username };
       setMessages((prev) => prev.some(m => m.id === record.id) ? prev : [...prev, localRecord]);
       setInput('');
     } catch (err) {
@@ -104,7 +118,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ roomId, role, memberColor })
         {messages.map((msg) => (
           <div key={msg.id} className="flex flex-col">
             <span className="text-[10px] font-bold" style={{ color: msg.color }}>
-              {msg.user_name || 'Anonymous'} {msg.user_id === user?.id ? '(You)' : ''}
+              {msg.user_name} {msg.user_id === user?.id ? '(You)' : ''}
             </span>
             <div 
               className={`p-2 rounded-neo text-sm mt-1 max-w-[90%] break-words ${

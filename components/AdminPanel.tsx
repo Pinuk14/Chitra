@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Admin Panel
+ * Admin Panel (Supabase)
  * 
  * A collapsible sidebar panel for room owners/admins to manage:
  * - Pending approval requests
@@ -10,11 +10,12 @@
  * - Moderation actions (kick/ban/mute)
  */
 
-import React, { useEffect, useState } from 'react';
-import { pb } from '@/lib/api';
+import React, { useEffect, useState, useCallback } from 'react';
+import { supabase } from '@/lib/api';
 import { useAuth } from '@/lib/auth/context';
 import { hasPermission, canModerate, type Role, ACTION_LABELS, type Action } from '@/lib/security/permissions';
 import { Button } from './ui/Button';
+import { kickUser as kickUserApi, banUser as banUserApi, muteUser as muteUserApi, unmuteUser as unmuteUserApi } from '@/lib/room';
 
 interface AdminPanelProps {
   roomId: string;
@@ -29,146 +30,117 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
   const [activeTab, setActiveTab] = useState<'pending' | 'members' | 'permissions'>('members');
 
   // Fetch members and pending requests
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!roomId) return;
-
-    const fetchData = async () => {
-      try {
-        const allMembers = await pb.collection('room_members').getFullList({
-          filter: `room_id = "${roomId}"`,
-          sort: '-created',
-          requestKey: null,
-        });
-        
-        // Deduplicate by user_id (keeps the newest record due to sort: '-created')
-        const uniqueMembers: any[] = [];
-        const seen = new Set();
-        for (const rec of allMembers) {
-          if (!seen.has(rec.user_id)) {
-            seen.add(rec.user_id);
-            uniqueMembers.push(rec);
-          }
+    try {
+      const { data: allMembers } = await supabase
+        .from('room_members')
+        .select('*')
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: false });
+      
+      const uniqueMembers: any[] = [];
+      const seen = new Set();
+      for (const rec of (allMembers || [])) {
+        if (!seen.has(rec.user_id)) {
+          seen.add(rec.user_id);
+          uniqueMembers.push(rec);
         }
-        setMembers(uniqueMembers);
+      }
+      setMembers(uniqueMembers);
 
-        const perms = await pb.collection('permission_requests').getFullList({
-          filter: `room_id = "${roomId}" && status = "pending"`,
-          sort: '-created',
-          requestKey: null,
-        });
-        setPermRequests(perms);
-      } catch {}
-    };
+      const { data: perms } = await supabase
+        .from('permission_requests')
+        .select('*, profiles(username)')
+        .eq('room_id', roomId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+        
+      setPermRequests(perms || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [roomId]);
 
+  useEffect(() => {
     fetchData();
 
     // Real-time subscriptions
-    let unsubMembers: (() => void) | undefined;
-    let unsubPerms: (() => void) | undefined;
-
-    pb.collection('room_members').subscribe('*', (e) => {
-      if (e.record.room_id === roomId) fetchData();
-    }).then(unsub => { unsubMembers = unsub; });
-
-    pb.collection('permission_requests').subscribe('*', (e) => {
-      if (e.record.room_id === roomId) fetchData();
-    }).then(unsub => { unsubPerms = unsub; });
+    const channel = supabase.channel(`admin_panel:${roomId}-${Math.random()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_members', filter: `room_id=eq.${roomId}` }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'permission_requests', filter: `room_id=eq.${roomId}` }, () => fetchData())
+      .subscribe();
 
     return () => {
-      if (unsubMembers) unsubMembers();
-      if (unsubPerms) unsubPerms();
+      supabase.removeChannel(channel);
     };
-  }, [roomId]);
+  }, [roomId, fetchData]);
 
   const pendingMembers = members.filter(m => m.status === 'pending');
   const activeMembers = members.filter(m => m.status === 'active' || m.status === 'muted');
 
   const approveUser = async (memberId: string) => {
-    await pb.collection('room_members').update(memberId, { status: 'active' });
+    await supabase.from('room_members').update({ status: 'active' }).eq('id', memberId);
   };
 
   const rejectUser = async (memberId: string) => {
-    await pb.collection('room_members').update(memberId, { status: 'kicked' });
+    await supabase.from('room_members').update({ status: 'kicked' }).eq('id', memberId);
   };
 
   const changeRole = async (memberId: string, newRole: Role) => {
-    await pb.collection('room_members').update(memberId, { role: newRole });
-    // Log the moderation action
+    await supabase.from('room_members').update({ role: newRole }).eq('id', memberId);
     if (user) {
       const member = members.find(m => m.id === memberId);
-      await pb.collection('moderation_log').create({
+      await supabase.from('moderation_log').insert({
         room_id: roomId,
-        actor_id: user.id,
-        target_id: member?.user_id || '',
+        moderator_id: user.id,
+        target_user_id: member?.user_id,
         action: newRole === 'viewer' ? 'demote' : 'promote',
         reason: `Role changed to ${newRole}`,
-      }).catch(() => {});
+      });
     }
   };
 
   const kickUser = async (memberId: string) => {
     const member = members.find(m => m.id === memberId);
-    await pb.collection('room_members').update(memberId, { status: 'kicked' });
     if (user && member) {
-      await pb.collection('moderation_log').create({
-        room_id: roomId, actor_id: user.id, target_id: member.user_id,
-        action: 'kick', reason: 'Kicked by admin',
-      }).catch(() => {});
+      await kickUserApi(memberId, roomId, user.id, member.user_id);
     }
   };
 
   const banUser = async (memberId: string, permanent: boolean) => {
     const member = members.find(m => m.id === memberId);
-    const banExpires = permanent ? '' : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    await pb.collection('room_members').update(memberId, {
-      status: 'banned',
-      ban_expires: banExpires,
-    });
     if (user && member) {
-      await pb.collection('moderation_log').create({
-        room_id: roomId, actor_id: user.id, target_id: member.user_id,
-        action: 'ban', reason: permanent ? 'Permanent ban' : '24h ban',
-        expires_at: banExpires,
-      }).catch(() => {});
+      await banUserApi(memberId, roomId, user.id, member.user_id, permanent);
     }
   };
 
   const muteUser = async (memberId: string) => {
     const member = members.find(m => m.id === memberId);
-    await pb.collection('room_members').update(memberId, { status: 'muted' });
     if (user && member) {
-      await pb.collection('moderation_log').create({
-        room_id: roomId, actor_id: user.id, target_id: member.user_id,
-        action: 'mute', reason: 'Muted by admin',
-      }).catch(() => {});
+      await muteUserApi(memberId, roomId, user.id, member.user_id);
     }
   };
 
   const unmuteUser = async (memberId: string) => {
     const member = members.find(m => m.id === memberId);
-    await pb.collection('room_members').update(memberId, { status: 'active' });
     if (user && member) {
-      await pb.collection('moderation_log').create({
-        room_id: roomId, actor_id: user.id, target_id: member.user_id,
-        action: 'unmute',
-      }).catch(() => {});
+      await unmuteUserApi(memberId, roomId, user.id, member.user_id);
     }
   };
 
   const approvePermission = async (requestId: string) => {
     if (!user) return;
-    await pb.collection('permission_requests').update(requestId, {
+    await supabase.from('permission_requests').update({
       status: 'approved',
-      resolved_by: user.id,
-    });
+    }).eq('id', requestId);
   };
 
   const rejectPermission = async (requestId: string) => {
     if (!user) return;
-    await pb.collection('permission_requests').update(requestId, {
+    await supabase.from('permission_requests').update({
       status: 'rejected',
-      resolved_by: user.id,
-    });
+    }).eq('id', requestId);
   };
 
   const TABS = [
@@ -256,7 +228,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
                         className="text-[10px] bg-neo-bg rounded shadow-neo-sm px-1 py-0.5 text-neo-text border-0 outline-none"
                       >
                         <option value="viewer">Viewer</option>
-                        <option value="editor">Editor</option>
+                        <option value="member">Member</option>
                         <option value="admin">Admin</option>
                       </select>
                     )}
@@ -303,9 +275,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
             permRequests.map(req => (
               <div key={req.id} className="p-2 rounded-neo shadow-neo-inset">
                 <p className="text-xs text-neo-text mb-1">
-                  <span className="font-bold">{req.username || 'User'}</span>
+                  <span className="font-bold">{req.profiles?.username || 'User'}</span>
                   {' requests '}
-                  <span className="font-bold text-neo-accent">{ACTION_LABELS[req.action as Action] || req.action}</span>
+                  <span className="font-bold text-neo-accent">{ACTION_LABELS[req.requested_role as Action] || req.requested_role}</span>
                 </p>
                 <div className="flex gap-1">
                   <button onClick={() => approvePermission(req.id)}

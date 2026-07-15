@@ -1,12 +1,12 @@
 /**
- * Room Management Module
+ * Room Management Module (Supabase)
  * 
  * All room operations now require authentication.
  * Room creation sets the owner and access mode.
  * Moderation actions (kick/ban/mute) create audit trail entries.
  */
 
-import { pb } from './api';
+import { supabase } from './api';
 
 export const createRoom = async (
   roomName: string,
@@ -14,28 +14,48 @@ export const createRoom = async (
   ownerUsername: string,
   accessMode: 'public' | 'invite_only' | 'manual_approval' = 'public'
 ) => {
-  const room = await pb.collection('rooms').create({
-    name: roomName,
-    created_by: ownerUsername,
-    owner_id: ownerId,
-    access_mode: accessMode,
-  });
+  const { data: room, error: roomError } = await supabase
+    .from('rooms')
+    .insert({
+      name: roomName,
+      created_by: ownerUsername,
+      owner_id: ownerId,
+      access_mode: accessMode,
+    })
+    .select()
+    .single();
+
+  if (roomError) throw new Error(roomError.message);
 
   // Create owner membership automatically
-  await pb.collection('room_members').create({
-    room_id: room.id,
-    user_id: ownerId,
-    username: ownerUsername,
-    role: 'owner',
-    status: 'active',
-    color: '#6C63FF',
-  });
+  const { error: memberError } = await supabase
+    .from('room_members')
+    .insert({
+      room_id: room.id,
+      user_id: ownerId,
+      username: ownerUsername,
+      role: 'owner',
+      status: 'active',
+      color: '#6C63FF',
+    });
+
+  if (memberError) {
+    // If membership fails, cleanup room
+    await supabase.from('rooms').delete().eq('id', room.id);
+    throw new Error(memberError.message);
+  }
 
   return room.id;
 };
 
 export const joinRoom = async (roomId: string) => {
-  const room = await pb.collection('rooms').getOne(roomId);
+  const { data: room, error } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('id', roomId)
+    .single();
+    
+  if (error) throw new Error(error.message);
   return room;
 };
 
@@ -47,21 +67,28 @@ export const inviteUser = async (
   userId: string,
   username: string,
   invitedBy: string,
-  role: 'editor' | 'viewer' = 'editor'
+  role: 'editor' | 'viewer' = 'viewer'
 ) => {
   const color = ['#6C63FF', '#FF6B6B', '#4ECDC4', '#FFE66D', '#FF9F1C', '#9D4EDD', '#F15BB5'][
     Math.floor(Math.random() * 7)
   ];
 
-  return await pb.collection('room_members').create({
-    room_id: roomId,
-    user_id: userId,
-    username,
-    role,
-    status: 'active',
-    color,
-    invited_by: invitedBy,
-  });
+  const { data, error } = await supabase
+    .from('room_members')
+    .insert({
+      room_id: roomId,
+      user_id: userId,
+      username,
+      role,
+      status: 'active',
+      color,
+      invited_by: invitedBy,
+    })
+    .select()
+    .single();
+    
+  if (error) throw new Error(error.message);
+  return data;
 };
 
 /**
@@ -73,13 +100,14 @@ export const kickUser = async (
   actorId: string,
   targetId: string
 ) => {
-  await pb.collection('room_members').update(memberId, { status: 'kicked' });
-  await pb.collection('moderation_log').create({
+  await supabase.from('room_members').update({ status: 'kicked' }).eq('id', memberId);
+  
+  await supabase.from('moderation_log').insert({
     room_id: roomId,
-    actor_id: actorId,
-    target_id: targetId,
+    moderator_id: actorId,
+    target_user_id: targetId,
     action: 'kick',
-  }).catch(() => {});
+  });
 };
 
 /**
@@ -93,19 +121,20 @@ export const banUser = async (
   targetId: string,
   permanent: boolean = false
 ) => {
-  const banExpires = permanent ? '' : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  await pb.collection('room_members').update(memberId, {
+  const banExpires = permanent ? null : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  
+  await supabase.from('room_members').update({
     status: 'banned',
     ban_expires: banExpires,
-  });
-  await pb.collection('moderation_log').create({
+  }).eq('id', memberId);
+  
+  await supabase.from('moderation_log').insert({
     room_id: roomId,
-    actor_id: actorId,
-    target_id: targetId,
+    moderator_id: actorId,
+    target_user_id: targetId,
     action: 'ban',
     reason: permanent ? 'Permanent ban' : '24h ban',
-    expires_at: banExpires,
-  }).catch(() => {});
+  });
 };
 
 /**
@@ -117,13 +146,14 @@ export const muteUser = async (
   actorId: string,
   targetId: string
 ) => {
-  await pb.collection('room_members').update(memberId, { status: 'muted' });
-  await pb.collection('moderation_log').create({
+  await supabase.from('room_members').update({ status: 'muted' }).eq('id', memberId);
+  
+  await supabase.from('moderation_log').insert({
     room_id: roomId,
-    actor_id: actorId,
-    target_id: targetId,
+    moderator_id: actorId,
+    target_user_id: targetId,
     action: 'mute',
-  }).catch(() => {});
+  });
 };
 
 /**
@@ -135,11 +165,12 @@ export const unmuteUser = async (
   actorId: string,
   targetId: string
 ) => {
-  await pb.collection('room_members').update(memberId, { status: 'active' });
-  await pb.collection('moderation_log').create({
+  await supabase.from('room_members').update({ status: 'active' }).eq('id', memberId);
+  
+  await supabase.from('moderation_log').insert({
     room_id: roomId,
-    actor_id: actorId,
-    target_id: targetId,
+    moderator_id: actorId,
+    target_user_id: targetId,
     action: 'unmute',
-  }).catch(() => {});
+  });
 };

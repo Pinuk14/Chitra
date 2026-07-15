@@ -3,7 +3,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/lib/auth/context';
 import { useRouter } from 'next/navigation';
-import { pb } from '@/lib/api';
+import { supabase } from '@/lib/api';
+import { createRoom } from '@/lib/room';
 import { AuthGuard } from '@/lib/auth/guard';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -46,46 +47,44 @@ function DashboardContent() {
     if (!user) return;
     setIsLoading(true);
     try {
-      // Fetch all room_members where user_id matches
-      const memberships = await pb.collection('room_members').getFullList({
-        filter: `user_id = "${user.id}" && status = "active"`,
-        sort: '-created',
-        requestKey: null,
-      });
+      const { data: memberships, error } = await supabase
+        .from('room_members')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .order('joined_at', { ascending: false });
+
+      if (error) throw error;
 
       // Fetch room details and member counts
       const cards: (RoomCard | null)[] = await Promise.all(
-        memberships.map(async (m) => {
+        (memberships || []).map(async (m) => {
           try {
-            const [room, members] = await Promise.all([
-              pb.collection('rooms').getOne(m.room_id, { requestKey: null }),
-              pb.collection('room_members').getFullList({
-                filter: `room_id = "${m.room_id}" && status = "active"`,
-                requestKey: null,
-              }),
+            const [ { data: room }, { count } ] = await Promise.all([
+              supabase.from('rooms').select('*').eq('id', m.room_id).single(),
+              supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', m.room_id).eq('status', 'active')
             ]);
+
+            if (!room) return null;
+
             return {
               roomId: room.id,
               roomName: room.name || 'Untitled Canvas',
               accessMode: room.access_mode as AccessMode,
               role: m.role,
-              membersCount: members.length,
-              lastModified: room.updated,
+              membersCount: count || 0,
+              lastModified: room.created_at,
               isOwner: m.role === 'owner',
             };
           } catch (err: any) {
-            // If the room was deleted but the membership remains, ignore it
-            if (err.status === 404) {
-              return null;
-            }
             console.error(`Failed to load room ${m.room_id}:`, err);
-            return null; // Also skip other errors for this specific room to not crash the dashboard
+            return null;
           }
         })
       );
       setRooms(cards.filter((c): c is RoomCard => c !== null));
-    } catch (err) {
-      console.error('Failed to fetch rooms:', err);
+    } catch (err: any) {
+      console.error('Failed to fetch rooms:', err?.message || JSON.stringify(err, null, 2), err);
     } finally {
       setIsLoading(false);
     }
@@ -95,25 +94,17 @@ function DashboardContent() {
     fetchRooms();
   }, [fetchRooms]);
 
-  const createRoom = async () => {
+  const handleCreateRoom = async () => {
     if (!user) return;
     setIsCreating(true);
     try {
-      const room = await pb.collection('rooms').create({
-        name: `Canvas ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`,
-        created_by: user.username,
-        owner_id: user.id,
-        access_mode: accessMode,
-      });
-      await pb.collection('room_members').create({
-        room_id: room.id,
-        user_id: user.id,
-        username: user.username,
-        role: 'owner',
-        status: 'active',
-        color: '#6C63FF',
-      });
-      router.push(`/room/${room.id}`);
+      const roomId = await createRoom(
+        `Canvas ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`,
+        user.id,
+        user.username,
+        accessMode
+      );
+      router.push(`/room/${roomId}`);
     } catch (err) {
       console.error(err);
     } finally {
@@ -128,7 +119,7 @@ function DashboardContent() {
   const handleRename = async (roomId: string) => {
     if (!editingName.trim()) return;
     try {
-      await pb.collection('rooms').update(roomId, { name: editingName.trim() });
+      await supabase.from('rooms').update({ name: editingName.trim() }).eq('id', roomId);
       setRooms(prev => prev.map(r => r.roomId === roomId ? { ...r, roomName: editingName.trim() } : r));
     } catch (err) {
       console.error('Failed to rename:', err);
@@ -140,7 +131,7 @@ function DashboardContent() {
   const handleDelete = async () => {
     if (!roomToDelete) return;
     try {
-      await pb.collection('rooms').delete(roomToDelete);
+      await supabase.from('rooms').delete().eq('id', roomToDelete);
       setRooms(prev => prev.filter(r => r.roomId !== roomToDelete));
     } catch (err) {
       console.error('Failed to delete room:', err);
@@ -221,7 +212,7 @@ function DashboardContent() {
                 </div>
               </div>
               <div className="flex flex-col justify-end gap-3">
-                <button onClick={createRoom} disabled={isCreating}
+                <button onClick={handleCreateRoom} disabled={isCreating}
                   className="neo-button font-bold text-sm disabled:opacity-50 min-w-[140px] text-center">
                   {isCreating ? 'Creating...' : 'Create Canvas'}
                 </button>

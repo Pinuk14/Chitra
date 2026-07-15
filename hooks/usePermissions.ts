@@ -1,14 +1,14 @@
 'use client';
 
 /**
- * usePermissions Hook
+ * usePermissions Hook (Supabase)
  * 
  * Provides permission checking for the current user in a room.
  * Uses the centralized permission manager — no hardcoded checks.
  */
 
 import { useCallback, useEffect } from 'react';
-import { pb } from '@/lib/api';
+import { supabase } from '@/lib/api';
 import { useAuth } from '@/lib/auth/context';
 import { hasPermission, type Role, type Action } from '@/lib/security/permissions';
 
@@ -29,20 +29,27 @@ export function usePermissions(roomId: string, role: Role | null): UsePermission
     if (!user || !roomId) return;
     try {
       // Check for existing pending request to avoid spam
-      const existing = await pb.collection('permission_requests').getFullList({
-        filter: `room_id = "${roomId}" && user_id = "${user.id}" && action = "${action}" && status = "pending"`,
-        requestKey: null,
-      });
+      const { data: existing } = await supabase
+        .from('permission_requests')
+        .select('*')
+        .eq('room_id', roomId)
+        .eq('user_id', user.id)
+        .eq('status', 'pending');
       
-      if (existing.length > 0) {
-        return; // Already have a pending request
+      if (existing && existing.length > 0) {
+        // If they already have a pending request, we can just update it
+        // Or ignore it depending on UX. We will just update it.
+        await supabase
+          .from('permission_requests')
+          .update({ requested_role: action })
+          .eq('id', existing[0].id);
+        return;
       }
 
-      await pb.collection('permission_requests').create({
+      await supabase.from('permission_requests').insert({
         room_id: roomId,
         user_id: user.id,
-        username: user.username,
-        action,
+        requested_role: action,
         status: 'pending',
       });
     } catch (err) {
@@ -54,23 +61,25 @@ export function usePermissions(roomId: string, role: Role | null): UsePermission
   useEffect(() => {
     if (!user || !roomId) return;
 
-    let unsubscribe: (() => void) | undefined;
-
-    pb.collection('permission_requests').subscribe('*', (e) => {
-      if (e.action === 'update' && e.record.user_id === user.id && e.record.room_id === roomId) {
-        if (e.record.status === 'approved') {
-          // Add a small delay so it doesn't block immediately if they are drawing
-          setTimeout(() => {
-            alert(`Your request for '${e.record.action}' permission has been approved!`);
-          }, 100);
+    const channel = supabase
+      .channel(`permission_requests:${roomId}:${user.id}-${Math.random()}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'permission_requests', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const record = payload.new as any;
+          if (record.user_id === user.id && record.status === 'approved') {
+            // Add a small delay so it doesn't block immediately if they are drawing
+            setTimeout(() => {
+              alert(`Your request for '${record.requested_role}' permission has been approved!`);
+            }, 100);
+          }
         }
-      }
-    }).then(unsub => {
-      unsubscribe = unsub;
-    });
+      )
+      .subscribe();
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      supabase.removeChannel(channel);
     };
   }, [user, roomId]);
 
