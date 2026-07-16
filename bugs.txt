@@ -1,1 +1,2 @@
-after using the chat for too long the canvas got streched out with the chatroom's container
+1. Optimize for mobile displays, andd touch responsive ness for canvas currently it only works with mouse/cursor and also the canvas size being dynamic and all to a mobile ratio
+2. 

@@ -50,14 +50,24 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
   
   const imageCache = useRef<Record<string, HTMLImageElement>>({});
 
+  // Dynamic canvas sizing
+  const [canvasSize, setCanvasSize] = useState<{ width: number, height: number }>({ width: 1200, height: 700 });
+  const isTouchDevice = useRef(false);
+
+  // Pinch-to-zoom state
+  const pinchState = useRef<{ initialDistance: number, initialScale: number, midpoint: { x: number, y: number }, initialOffsetX: number, initialOffsetY: number } | null>(null);
+
   const getCanvasCoords = (e: React.MouseEvent | React.WheelEvent | MouseEvent | TouchEvent, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
     let clientX = 0;
     let clientY = 0;
     
-    if ('touches' in e) {
+    if ('touches' in e && e.touches.length > 0) {
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
+    } else if ('changedTouches' in e && e.changedTouches.length > 0) {
+      clientX = e.changedTouches[0].clientX;
+      clientY = e.changedTouches[0].clientY;
     } else {
       clientX = (e as MouseEvent).clientX;
       clientY = (e as MouseEvent).clientY;
@@ -251,7 +261,8 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
   };
 
   const getResizeHandle = (x: number, y: number, box: {x: number, y: number, width: number, height: number}, stroke?: any) => {
-    const handleSize = 10 / scale;
+    const baseHandleSize = isTouchDevice.current ? 18 : 10;
+    const handleSize = baseHandleSize / scale;
     let handles = [];
     
     if (stroke && stroke.type === 'line') {
@@ -351,10 +362,11 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
   };
 
   const redrawCanvas = useCallback((ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, offsetX * dpr, offsetY * dpr);
 
     strokes.forEach((stroke) => {
       drawShape(ctx, canvas, stroke);
@@ -552,13 +564,38 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     ctx.restore();
   };
 
+  // ResizeObserver for dynamic canvas sizing
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateSize = () => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setCanvasSize({ width: rect.width, height: rect.height });
+      }
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Apply DPI scaling and redraw whenever size or content changes
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvasSize.width * dpr;
+    canvas.height = canvasSize.height * dpr;
+    ctx.scale(dpr, dpr);
+
     redrawCanvas(ctx, canvas);
-  }, [strokes, scale, offsetX, offsetY, redrawCanvas]);
+  }, [strokes, scale, offsetX, offsetY, redrawCanvas, canvasSize]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault(); // Prevent default focus stealing so text area can be focused
@@ -923,8 +960,9 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     if (tool === 'brush') {
       currentPoints.current.push({ x, y });
       
+      const dpr = window.devicePixelRatio || 1;
       ctx.save();
-      ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+      ctx.setTransform(scale * dpr, 0, 0, scale * dpr, offsetX * dpr, offsetY * dpr);
       ctx.globalAlpha = opacity;
       ctx.strokeStyle = color;
       ctx.lineWidth = strokeWidth;
@@ -966,8 +1004,9 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       if (!startPoint.current) return;
       redrawCanvas(ctx, canvas);
       
+      const dpr = window.devicePixelRatio || 1;
       ctx.save();
-      ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
+      ctx.setTransform(scale * dpr, 0, 0, scale * dpr, offsetX * dpr, offsetY * dpr);
       const startX = startPoint.current.x;
       const startY = startPoint.current.y;
       
@@ -1056,6 +1095,7 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     
     isDrawing.current = false;
     currentPoints.current = [];
+    pinchState.current = null;
     startPoint.current = null;
   };
 
@@ -1125,6 +1165,130 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
     }
   };
 
+  // Touch event handlers
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const getTouchDistance = (t1: Touch, t2: Touch) => {
+      return Math.sqrt(Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2));
+    };
+
+    const getTouchMidpoint = (t1: Touch, t2: Touch) => {
+      return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      isTouchDevice.current = true;
+
+      if (e.touches.length === 2) {
+        // Start pinch-to-zoom / two-finger pan
+        isDrawing.current = false;
+        isPanning.current = false;
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        const mid = getTouchMidpoint(e.touches[0], e.touches[1]);
+        pinchState.current = {
+          initialDistance: dist,
+          initialScale: scale,
+          midpoint: mid,
+          initialOffsetX: offsetX,
+          initialOffsetY: offsetY,
+        };
+        return;
+      }
+
+      if (e.touches.length !== 1) return;
+
+      // Single touch — simulate mouse down
+      const touch = e.touches[0];
+      const syntheticEvent = {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        button: 0,
+        preventDefault: () => {},
+        target: e.target,
+      } as unknown as React.MouseEvent;
+
+      handleMouseDown(syntheticEvent);
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+
+      if (e.touches.length === 2 && pinchState.current) {
+        // Pinch-to-zoom + pan
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        const mid = getTouchMidpoint(e.touches[0], e.touches[1]);
+        const zoomRatio = dist / pinchState.current.initialDistance;
+        let newScale = pinchState.current.initialScale * zoomRatio;
+        newScale = Math.max(0.1, Math.min(10, newScale));
+
+        const rect = canvas.getBoundingClientRect();
+        const pivotX = pinchState.current.midpoint.x - rect.left;
+        const pivotY = pinchState.current.midpoint.y - rect.top;
+
+        const scaleChange = newScale / pinchState.current.initialScale;
+        const newOffsetX = pivotX - (pivotX - pinchState.current.initialOffsetX) * scaleChange
+          + (mid.x - pinchState.current.midpoint.x);
+        const newOffsetY = pivotY - (pivotY - pinchState.current.initialOffsetY) * scaleChange
+          + (mid.y - pinchState.current.midpoint.y);
+
+        setTransform(newScale, newOffsetX, newOffsetY);
+        return;
+      }
+
+      if (e.touches.length !== 1) return;
+
+      const touch = e.touches[0];
+      const syntheticEvent = {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        button: 0,
+        preventDefault: () => {},
+        target: e.target,
+      } as unknown as React.MouseEvent;
+
+      handleMouseMove(syntheticEvent);
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      e.preventDefault();
+
+      // If pinch was active and now fewer than 2 fingers, end pinch
+      if (pinchState.current) {
+        pinchState.current = null;
+        if (e.touches.length === 0) return;
+        return;
+      }
+
+      if (e.touches.length > 0) return; // still has fingers down
+
+      const touch = e.changedTouches[0];
+      const syntheticEvent = {
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        button: 0,
+        preventDefault: () => {},
+        target: e.target,
+      } as unknown as React.MouseEvent;
+
+      handleMouseUp(syntheticEvent);
+    };
+
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('touchstart', handleTouchStart);
+      canvas.removeEventListener('touchmove', handleTouchMove);
+      canvas.removeEventListener('touchend', handleTouchEnd);
+      canvas.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  });
+
   return (
     <div 
       ref={containerRef}
@@ -1132,21 +1296,22 @@ export const Canvas: React.FC<CanvasProps> = ({ roomId, role, memberColor }) => 
       style={{
         backgroundImage: `radial-gradient(rgba(128, 128, 128, 0.3) 2px, transparent 2px)`,
         backgroundSize: `${30 * scale}px ${30 * scale}px`,
-        backgroundPosition: `${offsetX}px ${offsetY}px`
+        backgroundPosition: `${offsetX}px ${offsetY}px`,
+        overscrollBehavior: 'none',
+        WebkitOverflowScrolling: 'auto',
       }}
       onClick={() => setContextMenu(null)}
     >
       <canvas
         ref={canvasRef}
-        width={1200}
-        height={700}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
-        className={`border-0 rounded-neo shadow-neo-inset w-full h-full touch-none ${
+        style={{ width: '100%', height: '100%' }}
+        className={`border-0 rounded-neo shadow-neo-inset touch-none ${
           isSpaceDown.current || tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : 
           tool === 'select' ? 'cursor-default' :
           can('draw') ? 'cursor-crosshair' : 'cursor-not-allowed'

@@ -21,6 +21,19 @@ const COLORS = [
 ];
 const FONTS = ['sans-serif', 'serif', 'monospace', 'cursive', 'fantasy', 'Inter', 'Roboto', 'Outfit', 'Comic Sans MS', 'Courier New', 'Impact'];
 
+// Tool icons for compact mobile display
+const TOOL_ICONS: Record<string, string> = {
+  select: '☝',
+  pan: '✋',
+  brush: '✏️',
+  eraser: '🧹',
+  text: 'T',
+  rectangle: '▭',
+  circle: '○',
+  triangle: '△',
+  line: '╱',
+};
+
 interface ToolbarProps {
   roomId?: string;
   role?: Role | null;
@@ -41,6 +54,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
   const [showShapes, setShowShapes] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showConfirmClear, setShowConfirmClear] = useState(false);
+  const [showColors, setShowColors] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -154,152 +168,190 @@ export const Toolbar: React.FC<ToolbarProps> = ({ roomId, role = null }) => {
 
   return (
     <>
-      <div className="flex flex-wrap gap-2 p-2 mt-2 bg-neo-bg rounded-neo shadow-neo-md items-center justify-center mx-auto w-max max-w-full relative z-50">
-        {/* Logo mark */}
-        <div className="flex items-center pr-2 border-r-2 border-neo-shadow/20 mr-1">
-          <Image src="/Chitra_logo.png" alt="Chitra" width={28} height={28} className="object-contain opacity-80" />
-        </div>
-        {/* Tool Selector */}
-        <div className="flex gap-1 bg-neo-shadow/5 p-1 rounded-neo">
-          {PRIMARY_TOOLS.map((t) => (
+      {/* Main toolbar — fixed bottom on mobile, inline on desktop */}
+      <div className="
+        fixed bottom-0 left-0 right-0 z-50 p-1.5 bg-neo-bg shadow-[0_-2px_10px_rgba(0,0,0,0.12)]
+        md:static md:shadow-neo-md md:rounded-neo md:mt-2 md:mx-auto md:w-max md:max-w-full md:p-2
+      " style={{ paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))' }}>
+        <div className="flex flex-wrap gap-1 md:gap-2 items-center justify-center">
+          {/* Logo — desktop only */}
+          <div className="hidden md:flex items-center pr-2 border-r-2 border-neo-shadow/20 mr-1">
+            <Image src="/Chitra_logo.png" alt="Chitra" width={28} height={28} className="object-contain opacity-80" />
+          </div>
+
+          {/* Tool Selector */}
+          <div className="flex gap-0.5 md:gap-1 bg-neo-shadow/5 p-0.5 md:p-1 rounded-neo">
+            {PRIMARY_TOOLS.map((t) => (
+              <button
+                key={t}
+                title={`Shortcut: ${t === 'select' ? 'S' : t === 'pan' ? 'V' : t.charAt(0).toUpperCase()}`}
+                onClick={() => guardAction('draw', () => { setTool(t); setShowShapes(false); setShowSettings(false); setShowColors(false); })}
+                className={`w-9 h-9 md:w-auto md:h-auto md:px-3 md:py-1.5 flex items-center justify-center rounded-neo transition-all text-sm font-bold ${
+                  tool === t
+                    ? 'shadow-neo-inset text-neo-accent bg-neo-bg'
+                    : 'hover:bg-neo-shadow/10 text-neo-text'
+                } ${!can('draw') && t !== 'pan' ? 'opacity-50' : ''}`}
+              >
+                <span className="md:hidden text-base">{TOOL_ICONS[t]}</span>
+                <span className="hidden md:inline">{t.charAt(0).toUpperCase() + t.slice(1)}</span>
+              </button>
+            ))}
+            
+            <div className="relative flex items-center">
+              <button
+                onClick={() => guardAction('draw', () => { setShowShapes(!showShapes); setShowSettings(false); setShowColors(false); })}
+                className={`w-9 h-9 md:w-auto md:h-auto md:px-3 md:py-1.5 flex items-center justify-center rounded-neo transition-all text-sm font-bold ${
+                  SHAPE_TOOLS.includes(tool) || showShapes
+                    ? 'shadow-neo-inset text-neo-accent bg-neo-bg'
+                    : 'hover:bg-neo-shadow/10 text-neo-text'
+                } ${!can('draw') ? 'opacity-50' : ''}`}
+              >
+                <span className="md:hidden text-base">{SHAPE_TOOLS.includes(tool) ? TOOL_ICONS[tool] : '▭'}</span>
+                <span className="hidden md:inline">Shapes {SHAPE_TOOLS.includes(tool) ? `(${tool})` : '▾'}</span>
+              </button>
+              {showShapes && (
+                <div className="absolute bottom-full md:bottom-auto md:top-full left-0 mb-2 md:mb-0 md:mt-2 p-2 bg-neo-bg rounded-neo shadow-neo-md flex flex-col gap-1 min-w-[120px] z-[100]">
+                  {SHAPE_TOOLS.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => { setTool(t); setShowShapes(false); }}
+                      className={`text-left px-3 py-2 rounded text-sm font-medium ${
+                        tool === t ? 'bg-neo-accent/10 text-neo-accent' : 'hover:bg-neo-shadow/10'
+                      }`}
+                    >
+                      <span className="mr-2">{TOOL_ICONS[t]}</span>
+                      {t.charAt(0).toUpperCase() + t.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <button
-              key={t}
-              title={`Shortcut: ${t === 'select' ? 'S' : t === 'pan' ? 'V' : t.charAt(0).toUpperCase()}`}
-              onClick={() => guardAction('draw', () => { setTool(t); setShowShapes(false); setShowSettings(false); })}
-              className={`px-3 py-1.5 rounded-neo transition-all text-sm font-bold ${
-                tool === t
-                  ? 'shadow-neo-inset text-neo-accent bg-neo-bg'
-                  : 'hover:bg-neo-shadow/10 text-neo-text'
-              } ${!can('draw') && t !== 'pan' ? 'opacity-50' : ''}`}
+              onClick={() => guardAction('draw', () => fileInputRef.current?.click())}
+              className={`w-9 h-9 md:w-auto md:h-auto md:px-3 md:py-1.5 flex items-center justify-center rounded-neo transition-all text-sm font-bold hover:bg-neo-shadow/10 text-neo-text ${!can('draw') ? 'opacity-50' : ''}`}
             >
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              <span className="md:hidden text-base">🖼</span>
+              <span className="hidden md:inline">Image</span>
             </button>
-          ))}
-          
-          <div className="relative flex items-center">
-            <button
-              onClick={() => guardAction('draw', () => { setShowShapes(!showShapes); setShowSettings(false); })}
-              className={`px-3 py-1.5 rounded-neo transition-all text-sm font-bold ${
-                SHAPE_TOOLS.includes(tool) || showShapes
-                  ? 'shadow-neo-inset text-neo-accent bg-neo-bg'
-                  : 'hover:bg-neo-shadow/10 text-neo-text'
-              } ${!can('draw') ? 'opacity-50' : ''}`}
-            >
-              Shapes {SHAPE_TOOLS.includes(tool) ? `(${tool})` : '▾'}
-            </button>
-            {showShapes && (
-              <div className="absolute top-full left-0 mt-2 p-2 bg-neo-bg rounded-neo shadow-neo-md flex flex-col gap-1 min-w-[120px] z-[100]">
-                {SHAPE_TOOLS.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => { setTool(t); setShowShapes(false); }}
-                    className={`text-left px-3 py-2 rounded text-sm font-medium ${
-                      tool === t ? 'bg-neo-accent/10 text-neo-accent' : 'hover:bg-neo-shadow/10'
-                    }`}
-                  >
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
+            <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} />
+          </div>
+
+          {/* Color picker — collapsed swatch on mobile, full row on desktop */}
+          <div className="flex gap-1 md:gap-2 items-center border-l-2 border-neo-shadow/20 pl-1 md:pl-2">
+            {/* Mobile: single swatch + popover */}
+            <div className="relative md:hidden">
+              <button
+                onClick={() => { setShowColors(!showColors); setShowSettings(false); setShowShapes(false); }}
+                className={`w-8 h-8 rounded-full shrink-0 shadow-neo-sm border-2 ${showColors ? 'border-neo-accent ring-2 ring-neo-accent' : 'border-neo-bg'}`}
+                style={{ backgroundColor: color }}
+                aria-label="Pick color"
+              />
+              {showColors && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2.5 bg-neo-bg rounded-neo shadow-neo-md z-[100] grid grid-cols-5 gap-2 min-w-[170px]">
+                  {COLORS.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => { guardAction('draw', () => setColor(c)); setShowColors(false); }}
+                      className={`w-7 h-7 rounded-full shrink-0 transition-transform active:scale-90 ${
+                        color === c ? 'shadow-neo-md border-2 border-neo-bg ring-2 ring-neo-accent' : 'shadow-neo-sm border border-transparent'
+                      } ${!can('draw') ? 'opacity-50' : ''}`}
+                      style={{ backgroundColor: c }}
+                      aria-label={`Select color ${c}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Desktop: full color row */}
+            <div className="hidden md:flex gap-1 items-center">
+              {COLORS.slice(0, 10).map((c) => (
+                <button
+                  key={c}
+                  onClick={() => guardAction('draw', () => setColor(c))}
+                  className={`w-6 h-6 rounded-full shrink-0 transition-transform hover:scale-110 active:scale-95 ${
+                    color === c ? 'shadow-neo-md border-2 border-neo-bg ring-2 ring-neo-accent' : 'shadow-neo-sm border border-transparent'
+                  } ${!can('draw') ? 'opacity-50' : ''}`}
+                  style={{ backgroundColor: c }}
+                  aria-label={`Select color ${c}`}
+                />
+              ))}
+            </div>
+            
+            <div className="relative flex items-center ml-0.5 md:ml-2">
+              <button
+                onClick={() => { setShowSettings(!showSettings); setShowShapes(false); setShowColors(false); }}
+                className={`w-9 h-9 md:w-auto md:h-auto md:px-3 md:py-1.5 flex items-center justify-center rounded-neo transition-all text-sm font-bold ${showSettings ? 'shadow-neo-inset text-neo-accent bg-neo-bg' : 'hover:bg-neo-shadow/10 text-neo-text'}`}
+              >
+                <span className="md:hidden text-base">⚙</span>
+                <span className="hidden md:inline">Adjust ▾</span>
+              </button>
+              
+              {showSettings && (
+                <div className="absolute bottom-full md:bottom-auto md:top-full left-1/2 -translate-x-1/2 mb-2 md:mb-0 md:mt-2 p-4 bg-neo-bg rounded-neo shadow-neo-md flex flex-col gap-4 min-w-[250px] z-[100]">
+                {tool === 'text' ? (
+                  <>
+                    <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
+                      FONT FAMILY
+                      <select value={fontFamily} onChange={e => setFontFamily(e.target.value)} className="bg-neo-bg shadow-neo-inset rounded px-2 py-2 outline-none text-sm text-neo-text border-r-8 border-transparent">
+                        {FONTS.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
+                      FONT SIZE ({fontSize}px)
+                      <input type="range" min="8" max="144" value={fontSize} onChange={e => setFontSize(Number(e.target.value))} className="w-full h-2 bg-neo-shadow/20 rounded-lg appearance-none cursor-pointer accent-neo-accent" />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
+                      ALIGNMENT
+                      <div className="flex gap-1">
+                        {['left', 'center', 'right', 'justify'].map((align) => (
+                          <button
+                            key={align}
+                            onClick={() => setTextAlign(align as any)}
+                            className={`flex-1 py-1 px-2 text-xs font-bold rounded-neo transition-all ${
+                              textAlign === align ? 'bg-neo-accent text-white shadow-neo-md' : 'bg-neo-shadow/10 text-neo-text hover:bg-neo-shadow/20'
+                            }`}
+                          >
+                            {align.charAt(0).toUpperCase() + align.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
+                      STROKE WIDTH ({strokeWidth}px)
+                      <input type="range" min="1" max="50" value={strokeWidth} onChange={e => setStrokeWidth(Number(e.target.value))} className="w-full h-2 bg-neo-shadow/20 rounded-lg appearance-none cursor-pointer accent-neo-accent" />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
+                      OPACITY ({Math.round(opacity * 100)}%)
+                      <input type="range" min="0.1" max="1" step="0.1" value={opacity} onChange={e => setOpacity(Number(e.target.value))} className="w-full h-2 bg-neo-shadow/20 rounded-lg appearance-none cursor-pointer accent-neo-accent" />
+                    </label>
+                  </>
+                )}
               </div>
             )}
           </div>
-
-          <button
-            onClick={() => guardAction('draw', () => fileInputRef.current?.click())}
-            className={`px-3 py-1.5 rounded-neo transition-all text-sm font-bold hover:bg-neo-shadow/10 text-neo-text ${!can('draw') ? 'opacity-50' : ''}`}
-          >
-            Image
-          </button>
-          <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} />
         </div>
 
-        {/* Color & Settings */}
-        <div className="flex gap-2 items-center border-l-2 border-neo-shadow/20 pl-2">
-          <div className="flex gap-1 items-center">
-            {COLORS.slice(0, 10).map((c) => (
-              <button
-                key={c}
-                onClick={() => guardAction('draw', () => setColor(c))}
-                className={`w-6 h-6 rounded-full shrink-0 transition-transform hover:scale-110 active:scale-95 ${
-                  color === c ? 'shadow-neo-md border-2 border-neo-bg ring-2 ring-neo-accent' : 'shadow-neo-sm border border-transparent'
-                } ${!can('draw') ? 'opacity-50' : ''}`}
-                style={{ backgroundColor: c }}
-                aria-label={`Select color ${c}`}
-              />
-            ))}
-          </div>
-          
-          <div className="relative flex items-center ml-2">
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className={`px-3 py-1.5 rounded-neo transition-all text-sm font-bold ${showSettings ? 'shadow-neo-inset text-neo-accent bg-neo-bg' : 'hover:bg-neo-shadow/10 text-neo-text'}`}
-            >
-              Adjust ▾
-            </button>
-            
-            {showSettings && (
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-4 bg-neo-bg rounded-neo shadow-neo-md flex flex-col gap-4 min-w-[250px] z-[100]">
-              {tool === 'text' ? (
-                <>
-                  <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
-                    FONT FAMILY
-                    <select value={fontFamily} onChange={e => setFontFamily(e.target.value)} className="bg-neo-bg shadow-neo-inset rounded px-2 py-2 outline-none text-sm text-neo-text border-r-8 border-transparent">
-                      {FONTS.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
-                    FONT SIZE ({fontSize}px)
-                    <input type="range" min="8" max="144" value={fontSize} onChange={e => setFontSize(Number(e.target.value))} className="w-full h-2 bg-neo-shadow/20 rounded-lg appearance-none cursor-pointer accent-neo-accent" />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
-                    ALIGNMENT
-                    <div className="flex gap-1">
-                      {['left', 'center', 'right', 'justify'].map((align) => (
-                        <button
-                          key={align}
-                          onClick={() => setTextAlign(align as any)}
-                          className={`flex-1 py-1 px-2 text-xs font-bold rounded-neo transition-all ${
-                            textAlign === align ? 'bg-neo-accent text-white shadow-neo-md' : 'bg-neo-shadow/10 text-neo-text hover:bg-neo-shadow/20'
-                          }`}
-                        >
-                          {align.charAt(0).toUpperCase() + align.slice(1)}
-                        </button>
-                      ))}
-                    </div>
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
-                    STROKE WIDTH ({strokeWidth}px)
-                    <input type="range" min="1" max="50" value={strokeWidth} onChange={e => setStrokeWidth(Number(e.target.value))} className="w-full h-2 bg-neo-shadow/20 rounded-lg appearance-none cursor-pointer accent-neo-accent" />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs font-bold text-neo-text/70">
-                    OPACITY ({Math.round(opacity * 100)}%)
-                    <input type="range" min="0.1" max="1" step="0.1" value={opacity} onChange={e => setOpacity(Number(e.target.value))} className="w-full h-2 bg-neo-shadow/20 rounded-lg appearance-none cursor-pointer accent-neo-accent" />
-                  </label>
-                </>
-              )}
+        {/* Zoom and Actions */}
+        <div className="flex gap-1 md:gap-2 items-center border-l-2 border-neo-shadow/20 pl-1 md:pl-2">
+          <div className="flex items-center gap-0.5 md:gap-1 bg-neo-shadow/5 p-0.5 md:p-1 rounded-neo">
+              <button onClick={handleZoomOut} className="w-7 h-7 md:w-6 md:h-6 flex items-center justify-center rounded hover:bg-neo-shadow/10 text-sm font-bold" title="Zoom Out (-)">-</button>
+              <button onClick={handleZoomReset} className="px-1 md:px-2 text-xs font-bold min-w-[2.5rem] md:min-w-[3rem]" title="Reset Zoom (0)">{Math.round(scale * 100)}%</button>
+              <button onClick={handleZoomIn} className="w-7 h-7 md:w-6 md:h-6 flex items-center justify-center rounded hover:bg-neo-shadow/10 text-sm font-bold" title="Zoom In (+)">+</button>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Zoom and Actions */}
-      <div className="flex gap-2 items-center border-l-2 border-neo-shadow/20 pl-2">
-        <div className="flex items-center gap-1 bg-neo-shadow/5 p-1 rounded-neo">
-            <button onClick={handleZoomOut} className="w-6 h-6 flex items-center justify-center rounded hover:bg-neo-shadow/10 text-sm font-bold" title="Zoom Out (-)">-</button>
-            <button onClick={handleZoomReset} className="px-2 text-xs font-bold min-w-[3rem]" title="Reset Zoom (0)">{Math.round(scale * 100)}%</button>
-            <button onClick={handleZoomIn} className="w-6 h-6 flex items-center justify-center rounded hover:bg-neo-shadow/10 text-sm font-bold" title="Zoom In (+)">+</button>
+            <div className="flex gap-0.5 md:gap-1">
+            <Button onClick={() => guardAction('draw', handleUndo)} variant="secondary" className={`!px-1.5 !py-1 md:!px-2 text-xs ${!can('draw') ? 'opacity-50' : ''}`} title="Undo (Ctrl+Z)">↶</Button>
+            <Button onClick={() => guardAction('draw', redo)} variant="secondary" className={`!px-1.5 !py-1 md:!px-2 text-xs ${!can('draw') ? 'opacity-50' : ''}`} title="Redo (Ctrl+Y)">↷</Button>
+            <Button onClick={() => guardAction('clear_board', handleClear)} variant="secondary" className={`!px-1.5 !py-1 md:!px-2 text-xs hidden sm:inline-flex ${!can('clear_board') ? 'opacity-50' : ''}`}>Clear</Button>
+            <Button onClick={() => guardAction('export_board', handleExport)} className={`!px-1.5 !py-1 md:!px-2 text-xs hidden sm:inline-flex ${!can('export_board') ? 'opacity-50' : ''}`}>Export</Button>
           </div>
-
-          <div className="flex gap-1">
-          <Button onClick={() => guardAction('draw', handleUndo)} variant="secondary" className={`!px-2 !py-1 text-xs ${!can('draw') ? 'opacity-50' : ''}`} title="Undo (Ctrl+Z)">↶</Button>
-          <Button onClick={() => guardAction('draw', redo)} variant="secondary" className={`!px-2 !py-1 text-xs ${!can('draw') ? 'opacity-50' : ''}`} title="Redo (Ctrl+Y)">↷</Button>
-          <Button onClick={() => guardAction('clear_board', handleClear)} variant="secondary" className={`!px-2 !py-1 text-xs ${!can('clear_board') ? 'opacity-50' : ''}`}>Clear</Button>
-          <Button onClick={() => guardAction('export_board', handleExport)} className={`!px-2 !py-1 text-xs ${!can('export_board') ? 'opacity-50' : ''}`}>Export</Button>
         </div>
-      </div>
+        </div>
       </div>
       
       <PermissionDeniedDialog

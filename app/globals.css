@@ -30,9 +30,19 @@
 }
 
 @layer base {
+  html, body {
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: auto;
+  }
   body {
     background-color: var(--color-neo-bg);
     color: var(--color-neo-text);
+  }
+  /* Prevent long-press callout on canvas during touch drawing */
+  canvas {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 }
 

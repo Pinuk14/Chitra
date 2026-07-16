@@ -89,7 +89,7 @@ function RoomContent() {
 
   // Granted — render the whiteboard
   return (
-    <div className="min-h-screen flex flex-col p-8 gap-8 max-w-[1600px] mx-auto">
+    <div className="h-[100dvh] flex flex-col p-2 md:p-8 gap-2 md:gap-8 max-w-[1600px] mx-auto overflow-hidden" style={{ overscrollBehavior: 'none' }}>
       <div className="flex justify-between items-center bg-neo-bg shadow-neo-sm p-4 rounded-neo">
         <Link href="/dashboard" className="flex items-center gap-2 group">
           <Image src="/Chitra_logo.png" alt="Chitra" width={32} height={32} className="object-contain" />
@@ -134,7 +134,7 @@ function RoomContent() {
       <div className="flex-1 flex gap-6 min-h-0">
         <div className="flex-1 flex flex-col gap-6">
           <Toolbar roomId={roomId} role={access.role} />
-          <div className="flex-1 min-h-[600px] w-full">
+          <div className="flex-1 min-h-0 w-full pb-14 md:pb-0">
             <Canvas roomId={roomId} role={access.role} memberColor={memberColor} />
           </div>
         </div>
