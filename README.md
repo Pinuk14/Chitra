@@ -3,6 +3,8 @@
   <h1>Chitra</h1>
   <p><strong>A Real-Time, Secure Collaborative Whiteboard & Chat Application</strong></p>
 
+  <h3>🚀 <a href="https://chitra-draw.vercel.app/">Play with the Live Demo</a></h3>
+
   <p>
     <img src="https://img.shields.io/badge/Next.js-14+-black?style=for-the-badge&logo=next.js" alt="Next.js" />
     <img src="https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
@@ -16,6 +18,8 @@
 ## 🌟 Overview
 
 **Chitra** is a modern, high-performance collaborative whiteboard built for teams, educators, and creatives. It combines an infinite canvas with real-time cursor tracking, shape rotation, and secure messaging into one beautiful, neo-brutalist interface.
+
+👉 **[Try the Live Demo: chitra-draw.vercel.app](https://chitra-draw.vercel.app/)**
 
 Under the hood, Chitra utilizes a hybrid architecture relying on **Supabase Realtime** for sub-millisecond live broadcasting and **PostgreSQL Row Level Security (RLS)** for strict, scalable data persistence. 
 
