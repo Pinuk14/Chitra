@@ -48,8 +48,8 @@ export const UserList: React.FC<UserListProps> = ({ roomId }) => {
   }, [roomId, fetchMembers]);
 
   return (
-    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-6 w-full h-full">
-      <h3 className="text-lg font-bold mb-6 text-neo-accent border-b-2 border-neo-shadow pb-2">
+    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-3 md:p-6 w-full h-full">
+      <h3 className="text-lg font-bold mb-4 md:mb-6 text-neo-accent border-b-2 border-neo-shadow pb-2">
         Active Users ({members.length})
       </h3>
       <div className="space-y-4">

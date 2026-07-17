@@ -79,7 +79,7 @@ export const ShareRoom: React.FC<{ roomId: string; canInvite?: boolean }> = ({ r
   };
 
   return (
-    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-6 w-full flex flex-col gap-4">
+    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-3 md:p-6 w-full flex flex-col gap-3 md:gap-4">
       <div>
         <h3 className="text-sm font-bold text-neo-accent mb-2">Share Link</h3>
         <Button onClick={copyToClipboard} className="w-full font-bold">

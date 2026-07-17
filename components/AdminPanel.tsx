@@ -150,7 +150,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ roomId, myRole }) => {
   ];
 
   return (
-    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-4 w-full flex flex-col h-full">
+    <div className="bg-neo-bg rounded-neo shadow-neo-sm p-2 md:p-4 w-full flex flex-col h-full">
       <h3 className="text-sm font-bold text-neo-accent mb-3">Admin Panel</h3>
 
       {/* Tab Bar */}
